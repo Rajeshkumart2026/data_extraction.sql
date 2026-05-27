@@ -1,0 +1,147 @@
+sElEcT * fRoM (with Cte1 as 
+(
+  select  
+case_id,
+registered_date,
+month(registered_date) as month,
+to_date(registered_date) as Date,
+Weekofyear(registered_date) as weeknum,
+current_date() as Today_Date,
+complaint_type,
+call_status,
+last_updated_date,
+to_date(last_updated_date) as Last_Date, 
+datediff(to_date(last_updated_date), to_date(registered_date)) as diff_registered_date,
+purchase_date,
+sub_activity,
+product_selling_price,
+delivery_date,
+service_promise_date,
+city_name,
+state_name,
+zone_name,
+breach_bucket,
+last_updated_by,
+product_service_category_new,
+product_service_subcat_new,
+product_name_new,
+slot_type
+from  bigfoot_external_neo.scp_jeeves__jeeves_closures_and_sales_fact as a),
+cte2 as
+			   (
+			   select
+b.case_id,
+b.Date,
+b.complaint_type,
+b.call_status,
+b.last_updated_date,	
+b.product_name_new
+			    from Cte1 as b),
+cte3 as 
+(			   
+select 
+c.case_id,
+c.Date,
+case 
+			   when c.complaint_type = 'INSTALLATION' then Lower('INSTALLATION')
+			   when c.complaint_type like 'RE%' then lower('REPAIR')
+			   when c.complaint_type like 'TEC%' then Lower('TECH_VISIT')
+			   when c.complaint_type = 'UNINSTALLATION' then Lower('UNINSTALLATION')
+			   when c.complaint_type = 'MAINTENANCE'  then Lower('MAINTENANCE')
+			   else 'others'
+			   end as  complaint_type_N,
+c.call_status,
+c.product_name_new		
+			      from cte2 as c
+			   where lookup_date(c.Date) between '20240901' and '20240910'
+			   and 
+			  ( c.complaint_type in ( 'INSTALLATION', 'REPAIR', 'TECH_VISIT','MAINTENANCE', 'UNINSTALLATION'))),
+			   cte4 as 
+			   (
+Select 			   
+			   d.Date,	
+			   d.complaint_type_N,
+			   count( d.complaint_type_N) as Count_Complaint,
+			   d.product_name_new 
+			   from cte3 as d
+			   group by 
+			    d.Date,	
+			   d.complaint_type_N,
+			    d.product_name_new 
+			   order by Count_Complaint Desc, d.Date,  d.product_name_new
+			  		) ,
+			   cte5 as 
+			   (
+					select 
+					e.complaint_type_N,
+					dense_rank() over (partition by e.complaint_type_N order by e.Count_Complaint desc) as Dense_Rank,
+					e.Date,
+					e.product_name_new
+					from cte4 as e),
+			   cte6 as 
+			   (
+					select 
+				 f.case_id,
+				 f.last_updated_by,
+  				 f.Date,
+				 concat( f.case_id, f.last_updated_by, f.Date) as Concat_row
+				 						
+ from Cte1 as f	
+				 where lookup_date(f.Date) between '20240901' and '20240910'
+			   ),
+			   cte7 as
+			   (
+			   select 
+			    g.case_id,
+				 g.last_updated_by,
+  				 g.Date,
+			   count(g.Concat_row) as concat_count 
+			   			 			    from cte6 as g
+			   group by
+			   g.case_id,
+				 g.last_updated_by,
+  				 g.Date
+			   order by concat_count desc
+			   ), cte8 as
+			   (
+				select 
+			    h.case_id,
+				 h.last_updated_by,
+  				 h.Date,
+			   h.concat_count,
+			   case 
+			   when(h.concat_count) >1 then 'Repeat'
+			   else 'Unique'
+			   end as Repeat_Header
+			   from cte7 as h),
+			   cte9 as
+			   (
+			   select 
+			    j.Date,
+			    j.Repeat_Header,
+				count( j.Repeat_Header) as Repeat_count
+								 from cte8 as j
+				 group by 
+				     j.Date,
+			    j.Repeat_Header,
+				J.concat_count
+				  ),
+			   cte10 as 
+			   (
+			   select k.Date,
+			   sum(k.Repeat_count) as Sum_Repeat
+			   from cte9 as k
+			   group by k.Date 
+			   )
+			   select  
+			     j.Date,
+			    j.Repeat_Header,
+				j.Repeat_count,
+			   k.Sum_Repeat,
+			   concat(round((j.Repeat_count *100.0 ) / k.Sum_Repeat, 2), '%') as percentage
+			   from cte9 as j
+			   join cte10 as k
+			   on j.Date = k.Date
+			   order by j.Date, j.Repeat_Header
+			   )
+			   			   qaas_injected_alias
