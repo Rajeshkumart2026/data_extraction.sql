@@ -1,0 +1,94 @@
+SELECT * 
+FROM (
+    With Registration_data AS (
+        SELECT DISTINCT 
+            c.client_order_id,
+            c.brand_name,
+            c.plan_name,
+            c.construct_name,
+            c.vas_claim_id,
+            c.policy_id,
+            c.vas_claim_registered_timestamp,
+            c.policy_purchase_date,
+            c.policy_start_date,
+            c.policy_end_date,
+            c.policy_tenure,
+            c.vertical_name,
+            c.super_category_name,
+            c.secondary_policy_id,
+            a.part_usage_flag,
+	        a.case_id
+        FROM 
+            bigfoot_external_neo.scp_jeeves__vas_claims_base_fact AS c
+        LEFT JOIN 
+            bigfoot_external_neo.scp_jeeves__jeeves_repair_base_fact AS a
+        ON 
+            c.vas_claim_id = a.vas_claim_id ),
+     sales_contact AS (
+        SELECT 
+            e.case_id,
+            CASE 
+                WHEN e.is_bsd IN (0, 2) THEN 'Jeeves'
+                ELSE 'Others'
+            END AS Bsd_flag,
+	       e.registered_date,
+	       e.call_status,
+            e.product_name,
+	        e.call_completed_date,
+	        e.call_closed_date,
+	        e.last_updated_date,
+	         e.srms_last_system_timestamp,
+            e.last_status_date,
+            e.complaint_type,
+            e.state_name,
+            e.city_name,
+	        e.client_brand_id,
+	        e.purchase_date,
+	        e.sub_activity,
+	        e.branch_name,
+	        e.part_usage_flag,
+	        e.status_bucket,
+	        e.last_sub_activity,
+	        e.breach_bucket,
+	        e.outcome,
+            e.primary_issue_1,
+	        e.brand_name
+        FROM 
+            bigfoot_external_neo.scp_jeeves__jeeves_closures_and_sales_fact AS e
+        WHERE 
+            lookup_date(e.registered_date) = '20241101'
+        )
+    SELECT 
+           u.case_id,
+    	    u.product_name,
+            u.srms_last_system_timestamp,
+            u.last_status_date,
+            u.complaint_type,
+            u.state_name,
+            u.city_name,
+             u.client_brand_id,
+	        u.purchase_date,
+	        u.sub_activity,
+	        u.branch_name,
+	        u.part_usage_flag,
+	        u.status_bucket,
+	        u.last_sub_activity,
+            u.brand_name,
+            w.plan_name,
+            w.construct_name,
+            w.vas_claim_id,
+            w.policy_id,
+            w.vas_claim_registered_timestamp,
+            w.policy_purchase_date,
+            w.policy_start_date,
+            w.policy_end_date,
+            w.policy_tenure,
+            w.vertical_name,
+            w.super_category_name
+  	     
+    FROM 
+        Registration_data  AS w
+    LEFT JOIN sales_contact AS u
+    ON 
+        w.case_id = u.case_id
+) qaas_injected_alias;
