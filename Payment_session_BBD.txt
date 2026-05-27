@@ -1,0 +1,501 @@
+----Payment------Shopsy_flag_BBD
+
+
+with sessions as
+(
+	select * 
+	
+	from 
+	(
+		select session_id,
+		incident_id,
+		partner_location,
+		agent_profile,
+		agent_id,
+		session_dt,
+		ucid,
+		agent_name,
+		session_rank
+		
+		from 
+		(
+			Select distinct s.session_id,
+			s.incident_id,
+			case when s.agent_centre in ('IENGERIZER_DEHRADUN') then 'IENERGIZER_DEHRADUN'
+				 when s.agent_centre in ('TP_MOHALI') then 'TELE_PERFORMANCE_MOHALI' 
+				 else s.agent_centre end as partner_location,
+			s.agent_profile,
+			s.agent_id,
+			date(s.completed_at) as session_dt,
+			concat("$",s.ucid) as ucid,
+			s.agent_name,
+			row_number() over (partition by s.session_id order by s.incident_id) as session_rank
+
+			from bigfoot_external_neo.mp_cs__session_data_new_fact s
+			--WHERE lookup_date(completed_at) >= date_sub(current_date, 60)
+			where date(completed_at) >= '2025-09-01' 
+			and incident_id not in ('')
+		)AA
+		
+		group by session_id,incident_id,partner_location,agent_profile,agent_id,session_dt,ucid,agent_name,session_rank
+	
+	)xx
+	where session_rank = 1
+),
+
+profiles as
+(
+	SELECT deliverygroup
+  , ldap_id
+  , LOB
+  , partnercenter
+  , channel
+  , day_level_snap
+  ,FRM_OCR_Flag
+  , CASE 
+		WHEN LDAP_ID LIKE "tpm%" THEN "O2D" 
+      ELSE SUB_LOB 
+    END AS SUB_LOB
+	
+	FROM 
+	(
+		with profiles as 
+		(
+			select distinct deliverygroup,ldap_id,LOB,sub_lob, partnercenter,channel,day_level_snap, FRM_OCR_Flag, 'A' flag
+			
+			
+			from 
+			(
+				select deliverygroup,ldap_id,LOB,sub_lob, partnercenter,channel,day_level_snap,
+				case when (partnercenter in ('Startek Kolkata','TechM Noida') and LOB in ('FRM','FRM OCR')) then TRUE else FALSE end as FRM_OCR_Flag
+				
+				
+				from fdp_uploads.ds_fkint_scp_oms_cx_mst_employee_hc_2024_Q1_BQ_1_0
+				union all
+
+				select deliverygroup,ldap_id,LOB,sub_lob, partnercenter,channel,day_level_snap,
+				case when (partnercenter in ('Startek Kolkata','TechM Noida') and LOB in ('FRM','FRM OCR')) then TRUE else FALSE end as FRM_OCR_Flag
+								
+				from fdp_uploads.ds_fkint_scp_oms_cx_mst_employee_hc_2024_Q2_BQ_1_0
+				union all
+
+				select deliverygroup,ldap_id,LOB,sub_lob, partnercenter,channel,day_level_snap,
+				case when (partnercenter in ('Startek Kolkata','TechM Noida') and LOB in ('FRM','FRM OCR')) then TRUE else FALSE end as FRM_OCR_Flag
+				
+				
+				from fdp_uploads.ds_fkint_scp_oms_cx_mst_employee_hc_2024Q3_BQ_1_0
+				union all
+
+				select deliverygroup,ldap_id,LOB,sub_lob, partnercenter,channel,day_level_snap,
+				case when (partnercenter in ('Startek Kolkata','TechM Noida') and LOB in ('FRM','FRM OCR')) then TRUE else FALSE end as FRM_OCR_Flag
+				
+				from fdp_uploads.ds_fkint_scp_oms_cx_mst_employee_hc_2024_Q4_BQ_1_0
+				union all
+
+				select deliverygroup,ldap_id,LOB, sub_lob,partnercenter,channel,day_level_snap,
+				case when (partnercenter in ('Startek Kolkata','TechM Noida') and LOB in ('FRM','FRM OCR')) then TRUE else FALSE end as FRM_OCR_Flag
+				
+				from bigfoot_external_neo.scp_oms__cx_mst_employee_fact
+
+			) t1
+			 --date(production_date) >='2025-08-01'
+----		where  lob = 'FK Minutes'
+		),
+		
+		final as 
+		(
+			select deliverygroup,ldap_id,LOB,sub_lob, partnercenter,channel,day_level_snap as day_level_snap, FRM_OCR_Flag, flag
+			from profiles
+
+			union all
+
+			select deliverygroup,ldap_id,LOB, sub_lob,partnercenter,channel,date_add(day_level_snap,interval 1 day) day_level_snap, FRM_OCR_Flag, 'B' flag
+			
+			from 
+			(
+				select deliverygroup,ldap_id,LOB,sub_lob, partnercenter,channel,day_level_snap day_level_snap,FRM_OCR_Flag
+				from profiles
+				where date(day_level_snap) = date_sub(CURRENT_DATE(),interval 5 day)
+			) tt1
+
+			union all
+			
+			select deliverygroup,ldap_id,LOB,sub_lob, partnercenter,channel,date_add(day_level_snap,interval 2 day) day_level_snap,FRM_OCR_Flag, 'B' flag
+			
+			from 
+			(
+				select deliverygroup,ldap_id,LOB,sub_lob, partnercenter,channel,day_level_snap day_level_snap, FRM_OCR_Flag
+				from profiles
+				where date(day_level_snap) = date_sub(CURRENT_DATE(),interval 5 day)
+			) tt2
+			
+			union all
+
+			select deliverygroup,ldap_id,LOB,sub_lob, partnercenter,channel,date_add(day_level_snap,interval 3 day) day_level_snap,FRM_OCR_Flag, 'B' flag
+			
+			from 
+			(
+				select deliverygroup,ldap_id,LOB,sub_lob, partnercenter,channel,day_level_snap day_level_snap, FRM_OCR_Flag
+				
+				from profiles
+				where date(day_level_snap) = date_sub(CURRENT_DATE(),interval 5 day)
+			) tt3
+
+			union all
+
+			select deliverygroup,ldap_id,LOB,sub_lob, partnercenter,channel,date_add(day_level_snap,interval 4 day) day_level_snap,FRM_OCR_Flag, 'B' flag
+			
+			from 
+			(
+				select deliverygroup,ldap_id,LOB,sub_lob, partnercenter,channel,day_level_snap day_level_snap, FRM_OCR_Flag
+				from profiles
+				where date(day_level_snap) = date_sub(CURRENT_DATE(),interval 5 day)
+			) tt4
+
+			union all
+
+			select deliverygroup,ldap_id,LOB,sub_lob, partnercenter,channel,date_add(day_level_snap,interval 5 day) day_level_snap, FRM_OCR_Flag, 'B' flag
+			
+			from 
+			(
+				select deliverygroup,ldap_id,LOB,sub_lob, partnercenter,channel,day_level_snap day_level_snap, FRM_OCR_Flag
+				
+				from profiles
+				where date(day_level_snap) = date_sub(CURRENT_DATE(),interval 5 day)
+			) tt5
+
+		)
+
+		select distinct deliverygroup,ldap_id,LOB,sub_lob, partnercenter,channel,day_level_snap , FRM_OCR_Flag
+		
+		from 
+		(
+			select deliverygroup,ldap_id,LOB,sub_lob, partnercenter,channel,day_level_snap,flag, FRM_OCR_Flag,
+			ROW_NUMBER() over(PARTITION by ldap_id,day_level_snap order by flag) rn
+			from final
+		) t1
+		where rn = 1
+	)w
+),
+
+Inc as
+(
+	select distinct incident_id,
+	order_external_id,
+	SPLIT(order_item_id_list, ",")[ordinal(1)] as order_item_id_list,
+	incident_creation_time,
+	issue_type,
+	sub_issue_type,
+	sub_sub_issue_type,
+	blacklist_flag,
+	resolution_deadline,
+	incident_created_by,
+	current_queue_name,
+	incident_first_solved_time,
+	incident_last_solved_time,
+	incident_first_solved_agent_id,
+	resolution_deadline_breached,
+	customer_id,
+	lockin_flag,
+	incident_channel,
+	CASE WHEN resolution_deadline_breached ='No Promise Made' THEN 'OCR' ELSE '1CR' end as ocr_classification
+
+	from
+	bigfoot_external_neo.mp_cs__ims_incident_hive_fact
+
+	WHERE upper(tenant) = 'CS'
+	AND date(incident_creation_time) >= '2025-01-01'
+	AND current_queue_name <> 'Reviews'
+	AND sub_sub_issue_type not in ('Non Pickup related issues','Proactive Resolution', 'Asked Wishmaster to follow the BYOD check - Pickup the Product', 'Asked Wishmaster to Override', 'Asked Wishmaster to follow the BYOD check - Reject the pickup')
+),
+
+orders as
+(
+	select distinct o.order_external_id,
+	o.order_item_id,
+	o.analytic_business_unit,
+	o.analytic_category,
+	o.marketplace_id,
+	o.type,
+	o.analytic_super_category,
+	o.analytic_sub_category,
+	o.is_shopsy_order,
+	o.analytic_vertical,
+	case when o.is_alpha_seller is TRUE then "Alpha" else "MP" end as is_alpha_seller,
+--		o.brand,
+	date(o.approved_date_time) as approved_date_time,
+	case when o.analytic_vertical in ('AirConditioner','Refrigerator','Television','WashingMachineDryer','MicrowaveOven') then "LA5" else "Non-LA5" end as LA5_flag,
+--		case when datediff(to_date(o.initial_promise_date_time),to_date(o.approved_date_time)) < 2 then 1 else 0 end as SDD_NDD_flag,
+	case when ff.fulfill_item_unit_size = 'Large' then 'large' else "Non-Large" end as Large_SC_flag
+
+	from bigfoot_external_neo.cp_bi_prod_sales__forward_unit_history_fact o 
+	
+	LEFT JOIN
+	(
+		select data.fulfill_item_unit_order_item_unit_mapping.order_item_unit_mapping_external_id AS order_item_unit_id_string
+		,data.Fulfill_Item_Unit_Size AS fulfill_item_unit_size
+		,data.fulfill_item_unit_fulfill_item.Fulfill_Item_Delivery_Type as fulfill_item_delivery_type
+
+		FROM bigfoot_snapshot.dart_fkint_scp_fulfillment_fulfill_item_unit_7_view_total as fiu
+
+		where date(TIMESTAMP_MILLIS(updatedat)) >= '2023-01-01'
+	) as ff
+	ON o.id = ff.order_item_unit_id_string
+	
+	where order_date_key >= 20250101
+),
+
+lob_mapping_issue as
+(
+	select session_dt as contact_dt,
+	agent_id,
+	LOB,
+	count(distinct session_Id) as session_cnt,
+	sum(HYP_flag) as hyp_cnt,
+	sum(FK_flag) as FK_cnt
+	
+	from
+	(
+		select S.session_id,
+		S.agent_id,
+		S.session_dt,
+		t.LOB,
+		case when upper(o.marketplace_id) = "HYPERLOCAL" then 1 else 0 end as HYP_flag,
+		case when upper(o.marketplace_id) = "FLIPKART" then 1 else 0 end as FK_flag
+		
+		from sessions S
+
+		join inc I
+		on S.incident_id = I.incident_id
+
+		left join profiles t
+		on upper(s.agent_id) = upper(t.ldap_id) and s.session_dt = t.day_level_snap
+
+		left join orders o
+		on I.order_external_id = o.order_external_id 
+		AND (I.order_item_id_list = 'null' or o.order_item_id = I.order_item_id_list)
+		where S.session_dt >= '2025-08-01' 
+	)x
+	
+	group by session_dt,
+	agent_id,
+	LOB
+),
+
+txn as 
+(
+	SELECT checkout_id,
+	transaction_time,
+	date(transaction_time) as transaction_dt,
+	extract(month from transaction_time) as transaction_mth,
+	extract(year from transaction_time) as transaction_yr,
+	transaction_id,
+	transaction_status,  
+	card_type,
+	bank_code,
+	merchant_id,
+	live_response_code,
+	merchant_status,
+	marketplace_context,
+  	pg_id,
+	response_code,
+  	case when upper(payment_instrument) in ('EMI') and  pg_id in ('cfa_juspay_dmi_emi' ,'cfa_juspay_fibe_emi', 'cfa_juspay_abfl_emi', 'cfa_juspay_chola_emi', 'cfa_juspay_tvs_emi')
+				then 'fk_emi' else payment_instrument end as payment_instrument,
+	Case when upper(payment_instrument) in ("EMI") and lower(emi_type) not in ("fk-finance") then '3_p'
+    when upper(payment_instrument) in ("EMI") and lower(emi_type) in ("fk-finance") then '1_p'
+    end as emi_flag,
+  transaction_source,
+	case when routing_id in ('16','22','23','24','636','637','638','60201') then "HYP" else "Others" end as HYP_flag
+
+	--FROM bigfoot_external_neo.cp_payments__fkpg_forward_transaction_base_history_fact
+	FROM bigfoot_external_neo.cp_payments__fkpg_forward_transaction_base_fact
+
+	where extract(year from transaction_time) = 2025
+	and extract(month from transaction_time) >= 1
+)
+
+select
+year1,
+month1,
+wk1,
+session_dt,
+marketplace_id,
+is_shopsy_order,
+--lockin_flag,
+--analytic_business_unit,
+--LA5_flag,
+--analytic_super_category,
+--is_alpha_seller,
+--	analytic_vertical,
+--	deliverygroup,
+--LOB,
+--SUB_LOB,
+--	SDD_NDD_flag,
+--	Large_SC_flag,
+issue_type,
+sub_issue_type,
+sub_sub_issue_type,
+ssi,
+merchant_id,
+live_response_code,
+transaction_status,
+merchant_status,
+pg_id,
+transaction_source,
+payment_instrument,
+FRM_OCR_Flag,
+--FK_agent_flag,
+marketplace_context,
+case when upper(marketplace_id) = "HYPERLOCAL" and FK_agent_flag = "Non-FK" then "Minutes"
+when LOB = "FK Minutes" and FK_agent_flag = "Non-FK" then "Minutes"
+else "Non-Minutes" end as Minutes_flag,
+emi_flag,
+count(distinct session_id) as contacts,
+count(distinct incident_id) as inc_cnt,
+count(distinct order_external_id) as odr_cnt,
+count(distinct customer_id) as acct_cnt
+
+from 
+(
+	select distinct S.session_id,
+	S.partner_location,
+	S.agent_profile,
+	S.agent_id,
+	S.session_dt,
+	extract( year from session_dt) as year1,
+	extract( month from session_dt) as month1,
+	extract( week from session_dt) + 1 as wk1,
+--	S.ucid,
+	S.agent_name,
+	I.incident_id,
+	I.customer_id,
+	I.issue_type,
+	I.sub_issue_type,
+	I.sub_sub_issue_type,
+--	I.ocr_classification,
+--	I.lockin_flag,
+	concat(I.issue_type,'->',I.sub_issue_type,'->',I.sub_sub_issue_type) ssi,
+	case when T1.deliverygroup = 'L1 Delivery' then 'L1 Delivery'
+		 when T1.deliverygroup = 'L2 Delivery' then 'L2 Delivery' else 'Others' end as deliverygroup,
+--	T1.partnercenter,
+	T1.LOB,
+--	T1.channel,
+--	T1.SUB_LOB,
+	T1.FRM_OCR_Flag,
+	o.order_external_id,
+	o.order_item_id,
+--		o.initial_promise_date_time,
+--		o.final_promise_date_time,
+	o.analytic_business_unit,
+	o.is_shopsy_order,
+	o.marketplace_id,
+	o.is_alpha_seller,
+--		o.brand,
+	o.type,
+	o.analytic_vertical,
+	o.approved_date_time,
+--		o.ASP_slab,
+	o.analytic_category,
+	o.analytic_super_category,
+	o.analytic_sub_category,
+--		o.SDD_NDD_flag,
+	o.LA5_flag,
+--		o.status,
+--		o.net_filter_flag
+	o.Large_SC_flag,
+	x.hyp_cnt,
+	x.FK_cnt,
+	case when x.FK_cnt is null or x.hyp_cnt is null then "NA"
+	when (x.FK_cnt + x.hyp_cnt) = 0 then "NA"
+	when x.FK_cnt / (x.FK_cnt + x.hyp_cnt) > 0.6 then "FK"
+	else "Non-FK" end as FK_agent_flag,
+	tr.checkout_id,
+    tr.transaction_time,
+	tr.transaction_dt,
+	tr.transaction_id,  
+	tr.card_type,
+	tr.bank_code,
+	tr.merchant_id,
+	tr.live_response_code,
+	tr.transaction_status,
+	tr.merchant_status,
+	tr.HYP_flag,
+  	tr.pg_id,
+  	tr.response_code,
+  	tr.payment_instrument,
+  	tr.transaction_source,
+	tr.marketplace_context,
+	tr.emi_flag,
+  
+	ROW_NUMBER() over (partition by S.session_id order by S.session_dt asc) as RNK
+
+	from sessions S
+
+	join inc I
+	on S.incident_id = I.incident_id
+
+	left join profiles T1
+	on upper(s.agent_id) = upper(T1.ldap_id) and s.session_dt = T1.day_level_snap
+
+	left join orders o
+	on I.order_external_id = o.order_external_id 
+	AND (I.order_item_id_list = 'null' or o.order_item_id = I.order_item_id_list)
+	
+	left join lob_mapping_issue x
+	on s.agent_id = x.agent_id
+	and s.session_dt = x.contact_dt
+	
+	left join txn tr
+	on tr.checkout_id = I.order_external_id 
+	
+--	where upper(o.marketplace_id) in ("HYPERLOCAL") or T.LOB in ("FK Minutes") 
+)XX
+
+where rnk = 1
+and ssi in ('Order processing Related->Online Payment Issues->Amount Debited Order not confirmed',	
+'Product Purchase Queries->Payment related Queries->NA',	
+'Product Purchase Queries->Product Specific Information->Payment methods available',	
+'Order processing Related->Online Payment Issues->EGV not Getting Applied',	
+'Product Purchase Queries->Product Specific Information->How to use/redeem EGV',	
+'Payments / Wallet->e-Gift Voucher->e-Gift Voucher/Pin Not received',
+'Order processing Related->Online Payment Issues->Issue with COD to prepaid conversion',	
+'Product Purchase Queries->Product Specific Information->superPay Related Queries',	
+'Product Purchase Queries->Product Specific Information->superPay Related Issues',	
+'Product Purchase Queries->Product Specific Information->Enquiry about Flipkart EMI - Credit for All')	
+
+group by 
+year1,
+month1,
+wk1,
+session_dt,
+marketplace_id,
+is_shopsy_order,
+--lockin_flag,
+--analytic_business_unit,
+--LA5_flag,
+--analytic_super_category,
+--is_alpha_seller,
+--	analytic_vertical,
+--	deliverygroup,
+LOB,
+--	SDD_NDD_flag,
+--	Large_SC_flag,
+issue_type,
+sub_issue_type,
+sub_sub_issue_type,
+ssi,
+merchant_id,
+live_response_code,
+transaction_status,
+merchant_status,
+pg_id,
+transaction_source,
+payment_instrument,
+FRM_OCR_Flag,
+--SUB_LOB,
+FK_agent_flag,
+marketplace_context,
+emi_flag
+
+
+
