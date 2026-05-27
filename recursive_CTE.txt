@@ -1,0 +1,39 @@
+sElEcT * fRoM (with weekly_series as
+(
+  select
+ date_format(date_add ('2024-05-01', interval_value * 7), 'yyyy-ww') as week
+from (
+  select 0  as interval_value union all
+  select 1 union all
+  select 2 union all
+  select 3 union all
+  select 4 union all
+  select 5 union all
+  select 6 union all
+  select 7 union all
+  select 8 union all
+  select 9 union all
+  select 10 union all
+  select 11 union all
+  select 12 
+	) as interavls
+			   where date_add('2024-05-01' , interval_value * 7 ) <='2024-07-30'
+			   ),
+	weekly_count as 
+	(
+SELECT 
+        DATE_FORMAT(TO_DATE(registered_date), 'yyyy-ww') AS Week, 
+        COUNT(*) AS count,
+        plan_name   
+    FROM bigfoot_external_neo.scp_jeeves__Jeeves_repair_collated_base_fact
+    WHERE registered_date BETWEEN '2024-05-01' AND '2024-07-30' 
+    GROUP BY DATE_FORMAT(TO_DATE(registered_date), 'yyyy-ww'), plan_name
+	  )
+	  select
+	  ws.week,
+	  COALESCE(wc.count, 0) as count,
+	  wc.plan_name
+	  from weekly_series as ws
+	  left join weekly_count wc on ws.week = wc.week
+	  order by ws.week
+	  ) qaas_injected_alias
