@@ -1,0 +1,108 @@
+---Payment_units Dashboard-shopsy_BBD
+With transactions as
+(
+    select transaction_id,
+	transaction_status, 
+	live_response_code,
+	case when upper(payment_instrument) in ('EMI') and  pg_id in ('cfa_juspay_dmi_emi' ,'cfa_juspay_fibe_emi', 'cfa_juspay_abfl_emi', 'cfa_juspay_chola_emi', 'cfa_juspay_tvs_emi')
+				then 'fk_emi' else payment_instrument end as payment_instrument,
+	merchant_id,
+	checkout_id,
+	user_account_id,
+	date(transaction_time) as transaction_dt,
+	extract(month from transaction_time) as transaction_mth,
+	extract(year from transaction_time) as transaction_yr,
+	extract(week from transaction_time)+1 as transaction_wk,
+	a.transaction_source,
+	a.original_amount,
+	case when a.original_amount is null then "NA"
+	when a.original_amount <= 500 then "<500"
+	when a.original_amount <= 1000 then "500-1k"
+	when a.original_amount <= 2000 then "1k-2k"
+	when a.original_amount <= 5000 then "2k-5k"
+	when a.original_amount <= 10000 then "5k-10k"
+	when a.original_amount <= 20000 then "10k-20k"
+	else "20k+" end as asp_flag,
+	a.effective_pay_amount,
+	pg_id, 
+	Case when upper(payment_instrument) in ("EMI") and lower(emi_type) not in ("fk-finance") then '3_p'
+    when upper(payment_instrument) in ("EMI") and lower(emi_type) in ("fk-finance") then '1_p'
+    end as emi_flag,
+ 	pg_mid,
+	bank_code,
+	card_network,
+	transaction_date_key,
+	merchant_status,
+	query_response_code,
+	routing_id,
+	marketplace_context,
+	case when routing_id in ('16','22','23','24','636','637','638','60201') then "HYP" else "Others" end as hyp_flag
+	
+	from bigfoot_external_neo.cp_payments__fkpg_forward_transaction_base_fact a
+	
+	where transaction_date_key >= 20250801
+	--WHERE lookup_date(transaction_date_key) >= date_sub(current_date, 60)
+    --and merchant_id in ('mp_flipkart')
+),
+orders as
+(
+   select distinct checkout_id,
+	Order_external_id,
+	marketplace_id,
+	is_shopsy_order
+	from bigfoot_external_neo.cp_bi_prod_sales__forward_unit_history_fact O
+	where order_date_key >= 20241201
+--	and order_date_key <= 20240101
+  ),
+  Final_data as
+  (select
+   a.transaction_yr,
+ a.transaction_mth,
+a.transaction_wk,
+a.transaction_dt,
+a.transaction_status,
+a.transaction_source,
+a.live_response_code,
+a.payment_instrument,
+--a.card_network,
+a.bank_code,
+a.hyp_flag,
+a.asp_flag,
+a.merchant_id,
+a.merchant_status,
+o.marketplace_id,
+a.pg_id,
+a.marketplace_context,
+o.is_shopsy_order,
+a.emi_flag,
+case when a.merchant_id in ('mp_flipkart') and (a.live_response_code not in ('SUCCESS') or a.live_response_code is null) and a.transaction_status in ('SUCCESS') then "Adonc" else "No adonc" end as adonc_flag,
+count (distinct a.transaction_id) as count_of_tx,
+count(distinct user_account_id) as acct_cnt,
+sum(a.original_amount) as tot_amt,
+sum(a.effective_pay_amount) as tot_eff_amt_paymnt 
+   from transactions as a 
+   left join orders as o
+   on a.checkout_id = o.Order_external_id
+   --where upper(o.marketplace_id) = "HYPERLOCAL"
+   group by 
+   a.transaction_yr,
+ a.transaction_mth,
+a.transaction_wk,
+a.transaction_dt,
+a.transaction_status,
+a.transaction_source,
+a.live_response_code,
+a.payment_instrument,
+--a.card_network,
+a.bank_code,
+a.hyp_flag,
+a.asp_flag,
+a.merchant_id,
+a.merchant_status,
+o.marketplace_id,
+a.pg_id,
+o.is_shopsy_order,
+a.marketplace_context,
+a.emi_flag
+  )
+   select * from Final_data 
