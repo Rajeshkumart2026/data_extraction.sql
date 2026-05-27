@@ -1,0 +1,142 @@
+with master_date as
+(
+select 
+  channel_name,
+  count(channel_name) as Prod,
+  Format_DATE('%B', thread_created_at ) as Month,
+  extract(Year from thread_created_at) as Year,
+  from bigfoot_external_neo.mp_cs__ims_thread_hive_fact 
+  where channel_name is not null and  extract(Year from thread_created_at) = 2025
+  group by 
+  channel_name,
+  Format_DATE('%B', thread_created_at ),
+  extract(Year from thread_created_at)
+  )
+ select  channel_name,
+  sum(case when Month = 'January' then Prod else 0 end ) as Jan_Prod,
+  sum(case when Month = 'February' then Prod else 0 end) as Feb_Prod,
+  sum( case when Month = 'January' then Prod else 0 end) -
+	Sum(case when Month = 'February' then Prod else 0 end) as Prod_difference,
+	case 
+	  	when sum(case when Month = 'January' then Prod else 0 end)  = 0
+	Then Null
+	else  round(((sum(case when Month = 'January' then Prod else 0 end)  -
+		      sum(case when Month = 'February' then Prod else 0 end)) /
+	         sum(case when Month = 'January' then Prod else 0 end)  *100),2) 
+			end as Percent_change	
+  from master_date
+  group by channel_name 
+  having sum(case when Month = 'January' then Prod else 0 end ) >100
+  order by Jan_Prod Desc
+  
+  
+  --------------------------------
+  Comparing Year 
+  
+  with master_date as
+(
+select 
+  channel_name,
+  count(channel_name) as Prod,
+  Format_DATE('%B', thread_created_at ) as Month,
+  extract(Year from thread_created_at) as Year,
+  from bigfoot_external_neo.mp_cs__ims_thread_hive_fact 
+  where channel_name is not null and  extract(Year from thread_created_at)  in ( 2024, 2025)
+  group by 
+  channel_name,
+  Format_DATE('%B', thread_created_at ),
+  extract(Year from thread_created_at)
+  ),
+  Monthly_date as
+  (
+ select  
+ channel_name,
+ Month,
+  sum(case when Year = 2024 then Prod else 0 end ) as Prod_2024,
+  sum(case when Year = 2025 then Prod else 0 end) as Prod_2025,
+  
+  sum(case when Year = 2024 then Prod else 0 end )  -
+sum(case when Year = 2025 then Prod else 0 end) as Prod_difference,
+	case when
+	  	sum(case when Year = 2024 then Prod else 0 end )   = 0
+	Then Null
+	else  round(((sum(case when Year = 2024 then Prod else 0 end )   -
+		      sum(case when Year = 2025 then Prod else 0 end)) /
+	         sum(case when Year = 2024 then Prod else 0 end )   *100),2) 
+			end as Percent_change	
+  from master_date
+  group by channel_name , Month
+  having sum(case when Year = 2024 then Prod else 0 end ) >100
+)
+select *, 
+case Month 
+ WHEN 'January' THEN 1
+      WHEN 'February' THEN 2
+      WHEN 'March' THEN 3
+      WHEN 'April' THEN 4
+      WHEN 'May' THEN 5
+      WHEN 'June' THEN 6
+      WHEN 'July' THEN 7
+      WHEN 'August' THEN 8
+      WHEN 'September' THEN 9
+      WHEN 'October' THEN 10
+      WHEN 'November' THEN 11
+      WHEN 'December' THEN 12
+	  else Null
+	  end as Month_order
+	  from Monthly_date 
+	  order by channel_name, Month_order
+	   
+  
+  
+  ---------------------------------------------------
+  
+  with master_date as
+(
+select 
+  channel_name,
+  count(channel_name) as Prod,
+  Format_DATE('%B', thread_created_at ) as Month_name,
+  extract(Year from thread_created_at) as Year,
+  extract(Month from thread_created_at ) as Month_number,
+  from bigfoot_external_neo.mp_cs__ims_thread_hive_fact 
+  where channel_name is not null and  extract(Year from thread_created_at)  in ( 2024, 2025)
+  group by 
+  channel_name,
+  Format_DATE('%B', thread_created_at ),
+  extract(Year from thread_created_at),
+  Month_number
+  ),
+  Monthly_date as
+  (
+ select  
+ channel_name,
+	Month_name,
+    Month_number,
+  sum(case when Year = 2024 then Prod else 0 end ) as Prod_2024,
+  sum(case when Year = 2025 then Prod else 0 end) as Prod_2025
+  from master_date
+  group by channel_name , Month_number, Month_name
+  ),
+  with_trend as
+  (
+select 
+	Month_name,
+	Month_number,
+	Prod_2024,
+	Prod_2025,
+	(Prod_2025 - Prod_2024) as prod_diff,
+case  
+ WHEN Prod_2024 = 0 then NULL
+	else round(((Prod_2025 - Prod_2024) *100.0) / Prod_2024 ,2)
+	end as percentage_change,
+	case 
+	when Prod_2025 > Prod_2024 then 'Up'
+	when Prod_2025 < Prod_2024 then  'Down'
+	when Prod_2025 = Prod_2024 then 'No changes'
+	else 'Not Sure'
+	end as trend_indicator
+	from Monthly_date
+	)
+	select * from with_trend
+	order by Month_number
