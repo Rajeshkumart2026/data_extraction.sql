@@ -1,0 +1,238 @@
+select 
+p.transaction_dt,
+p.transaction_yr,
+p.transaction_mth,
+p.transaction_wk,
+p.total_transaction_count,
+j.success_count,
+k.failed_count,
+l.adonc_count,
+m.transaction_failed_count,
+n.confirmed_captured_count
+from 
+(WITH transactions AS (
+    SELECT 
+        transaction_id,
+        transaction_status, 
+        live_response_code,
+        payment_instrument,
+        merchant_id,
+        checkout_id,
+        user_account_id,
+        DATE(transaction_time) AS transaction_dt,
+        EXTRACT(MONTH FROM transaction_time) AS transaction_mth,
+        EXTRACT(YEAR FROM transaction_time) AS transaction_yr,
+        EXTRACT(WEEK FROM transaction_time) + 1 AS transaction_wk,
+        a.transaction_source,
+        a.original_amount,
+        CASE 
+            WHEN a.original_amount IS NULL THEN 'NA'
+            WHEN a.original_amount <= 500 THEN '<500'
+            WHEN a.original_amount <= 1000 THEN '500-1k'
+            WHEN a.original_amount <= 2000 THEN '1k-2k'
+            WHEN a.original_amount <= 5000 THEN '2k-5k'
+            WHEN a.original_amount <= 10000 THEN '5k-10k'
+            WHEN a.original_amount <= 20000 THEN '10k-20k'
+            ELSE '20k+' 
+        END AS asp_flag,
+        a.effective_pay_amount,
+        pg_id, 
+        pg_mid,
+        bank_code,
+        card_network,
+        transaction_date_key,
+        merchant_status,
+        query_response_code,
+        routing_id,
+        CASE 
+            WHEN routing_id IN ('16','22','23','24','636','637','638','60201') THEN 'HYP' 
+            ELSE 'Others' 
+        END AS hyp_flag
+    FROM bigfoot_external_neo.cp_payments__fkpg_forward_transaction_base_fact a
+    WHERE transaction_date_key >= 20250101
+),
+orders AS (
+    SELECT DISTINCT 
+        checkout_id,
+        Order_external_id,
+        marketplace_id
+    FROM bigfoot_external_neo.cp_bi_prod_sales__forward_unit_history_fact o
+    WHERE order_date_key >= 20241201
+),
+Final_data AS (
+    SELECT
+        a.transaction_yr,
+        a.transaction_mth,
+        a.transaction_wk,
+        a.transaction_dt,
+        a.transaction_status,
+        a.transaction_source,
+        a.live_response_code,
+        a.payment_instrument,
+        a.card_network,
+        a.bank_code,
+        a.hyp_flag,
+        a.asp_flag,
+        a.merchant_id,
+        a.merchant_status,
+        o.marketplace_id,
+        a.pg_id,
+        CASE 
+            WHEN a.merchant_id IN ('mp_flipkart') 
+                 AND (a.live_response_code NOT IN ('SUCCESS') OR a.live_response_code IS NULL) 
+                 AND a.transaction_status IN ('SUCCESS') 
+            THEN 'Adonc' 
+            ELSE 'No adonc' 
+        END AS adonc_flag,
+        COUNT(DISTINCT a.transaction_id) AS count_of_tx,
+        COUNT(DISTINCT user_account_id) AS acct_cnt,
+        SUM(a.original_amount) AS tot_amt,
+        SUM(a.effective_pay_amount) AS tot_eff_amt_paymnt 
+    FROM transactions a
+    LEFT JOIN orders o ON a.checkout_id = o.Order_external_id
+    GROUP BY 
+        a.transaction_yr,
+        a.transaction_mth,
+        a.transaction_wk,
+        a.transaction_dt,
+        a.transaction_status,
+        a.transaction_source,
+        a.live_response_code,
+        a.payment_instrument,
+        a.card_network,
+        a.bank_code,
+        a.hyp_flag,
+        a.asp_flag,
+        a.merchant_id,
+        a.merchant_status,
+        o.marketplace_id,
+        a.pg_id
+),
+grouping_fact as 
+( 
+  select 
+case when live_response_code = 'SUCCESS' then 'SUCCESS'
+else 'UN_SUCCESS'
+end as live_response_code_flag,
+b.transaction_dt,
+b.transaction_yr,
+b.transaction_mth,
+b.transaction_wk,
+b.payment_instrument,
+b.merchant_id,
+b.count_of_tx,
+b.transaction_status,
+b.merchant_status
+  from Final_data as b
+where 
+b.payment_instrument != 'COD' and 
+b.merchant_id = 'mp_flipkart'
+),
+overall_transaction_report as 
+(
+  select 
+  sum(p.count_of_tx) as total_transaction_count,
+ p.transaction_dt,
+p.transaction_yr,
+p.transaction_mth,
+p.transaction_wk
+  from grouping_fact as p
+  group by 
+ p.transaction_dt,
+p.transaction_yr,
+p.transaction_mth,
+p.transaction_wk
+ ) ,
+live_response_report as
+(
+  select 
+ c.transaction_dt,
+c.transaction_yr,
+c.transaction_mth,
+c.transaction_wk,
+  sum(case when live_response_code_flag = 'SUCCESS'  then c.count_of_tx else 0 end) as success_count
+  from grouping_fact as c 
+group by 
+   c.transaction_dt,
+c.transaction_yr,
+c.transaction_mth,
+c.transaction_wk
+),
+failed_report as
+(
+  select 
+ d.transaction_dt,
+d.transaction_yr,
+d.transaction_mth,
+d.transaction_wk,
+  sum(case when d.live_response_code_flag = 'UN_SUCCESS'  and d.transaction_status = 'FAILED' then d.count_of_tx else 0 end) as failed_count
+  from grouping_fact as d 
+group by 
+   d.transaction_dt,
+d.transaction_yr,
+d.transaction_mth,
+d.transaction_wk
+),
+adonc_report as
+(
+  select 
+ e.transaction_dt,
+e.transaction_yr,
+e.transaction_mth,
+e.transaction_wk,
+ sum(case when e.live_response_code_flag = 'UN_SUCCESS'  and e.transaction_status = 'SUCCESS' then e.count_of_tx else 0 end) as adonc_count
+  from grouping_fact as e
+group by 
+ e.transaction_dt,
+e.transaction_yr,
+e.transaction_mth,
+e.transaction_wk
+),
+transaction_failed_report as
+(
+  select 
+ f.transaction_dt,
+f.transaction_yr,
+f.transaction_mth,
+f.transaction_wk,
+  sum(case when f.live_response_code_flag = 'UN_SUCCESS'  and f.transaction_status = 'SUCCESS' and f.merchant_status = 'INVALIDATED' then f.count_of_tx else 0 end) as transaction_failed_count
+  from grouping_fact as f
+group by 
+   f.transaction_dt,
+f.transaction_yr,
+f.transaction_mth,
+f.transaction_wk
+),
+order_confirmed_captured_report as
+(
+  select 
+ g.transaction_dt,
+g.transaction_yr,
+g.transaction_mth,
+g.transaction_wk,
+  sum(case when g.live_response_code_flag = 'UN_SUCCESS'  and g.transaction_status = 'SUCCESS' and g.merchant_status = 'CAPTURED' then g.count_of_tx else 0 end) as confirmed_captured_count
+  from grouping_fact as g
+group by 
+   g.transaction_dt,
+g.transaction_yr,
+g.transaction_mth,
+g.transaction_wk
+)
+select 
+p.transaction_dt,
+p.transaction_yr,
+p.transaction_mth,
+p.transaction_wk,
+p.total_transaction_count,
+j.success_count,
+k.failed_count,
+l.adonc_count,
+m.transaction_failed_count,
+n.confirmed_captured_count
+from overall_transaction_report as p
+left join live_response_report as j on p.transaction_dt = j.transaction_dt
+left join adonc_report as l on p.transaction_dt = l.transaction_dt
+left join transaction_failed_report as m on p.transaction_dt = m.transaction_dt
+left join failed_report as k on p.transaction_dt = k.transaction_dt
+left join order_confirmed_captured_report as n on  p.transaction_dt = n.transaction_dt
+) as eof
