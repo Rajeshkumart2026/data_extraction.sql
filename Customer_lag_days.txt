@@ -1,0 +1,82 @@
+With Registered_data as 
+(
+select 
+customer_id,
+incident_created_by,
+final_issue_type,
+issue_type,
+Date(assigned_to_queue_at) as Date,
+Format_date('%B',  assigned_to_queue_at) as Month_name,
+current_queue_name,
+allocation_status,
+incident_first_queue,
+resolution_deadline_breached,
+tenant
+from bigfoot_external_neo.mp_cs__ims_incident_hive_fact
+  ) ,
+  Jan_activity as
+  (
+	select 
+	customer_id,
+	Date,
+	incident_first_queue,
+	lag(Date) over (partition by customer_id order by Date ) as Previous_date
+	from Registered_data 
+	where 
+	Date between '2025-01-01' AND '2025-01-31'
+		),
+	Returned_after_3days as
+	(
+	  select
+	  customer_id,
+	  Previous_date,
+	  Date as return_date,
+	  DATE_DIFF(Date, Previous_date, DAY) as gap_in_days
+	  from Jan_activity
+	  where Previous_date IS NOT NULL and 
+	  DATE_DIFF(Date, Previous_date, DAY) >=3
+	  )
+	  select * from Returned_after_3days limit 1000
+	
+
+
+-----------------------------------------------------------------------------
+
+With Registered_data as 
+(
+select 
+customer_id,
+incident_created_by,
+final_issue_type,
+issue_type,
+Date(assigned_to_queue_at) as Date,
+Format_date('%B',  assigned_to_queue_at) as Month_name,
+current_queue_name,
+allocation_status,
+incident_first_queue,
+resolution_deadline_breached,
+tenant
+from bigfoot_external_neo.mp_cs__ims_incident_hive_fact
+  ) ,
+  visit_timelines as
+  (
+	select
+	customer_id,
+	Date
+	from Registered_data
+	),
+	Concat_visit_days as
+	(
+	 select
+	  customer_id,
+	  STRING_AGG(CAST(Date as string), '->' order by Date) as visit_path,
+	  count(Distinct Date) as total_visits
+	  from visit_timelines
+	  group by customer_id
+	  )
+	  select * from Concat_visit_days
+	  where total_visits >1
+	  
+
+
+	
