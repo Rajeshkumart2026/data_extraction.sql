@@ -1,0 +1,269 @@
+-- refund_daily_view_(Units Query)_New_BBD
+
+with 
+----------------------------refund-------------------------------------
+
+refnd as 
+(
+	Select ref.*
+	,case
+	when ref_asc_rank =1 and ref_desc_rank = 1 then 'Single_Refund'
+	else 'Multiple_Refund' end as mr_refund_flag
+	,case
+		when ref.refund_amount > 10000 then '7. 10K_Plus'
+		when ref.refund_amount between 5000 and 10000 then '6. 5000_10000'
+		when ref.refund_amount between 3000 and 5000 then '5. 3000_5000'
+		when ref.refund_amount between 1500 and 3000 then '4. 1500_3000'
+		when ref.refund_amount between 1000 and 1500 then '3. 1000_1500'
+		when ref.refund_amount between 500 and 1000 then '2. 500_1000'
+		when ref.refund_amount < 500 then '1. Less_500'
+		else cast(ref.refund_amount as string) end as ref_amount_flag
+	,case 
+		when upper(ref.refund_mode) in('CREDIT_CARD_EMI', 'DEBIT_CARD', 'UPI_INTENT', 'CREDIT_CARD', 'PHONEPE', 'NETBANKING', 'UPI_COLLECT', 'IMPS', 'NEFT', 'FK_UPI', 'UPI','SUPERPAY_LATER','SUPERPAY_IN_INSTALLMENT') and  ref.bank_reference_number is NULL then 'ARN_NOT_GENERATED'
+		when upper(ref.refund_mode) in('CREDIT_CARD_EMI', 'DEBIT_CARD', 'UPI_INTENT', 'CREDIT_CARD', 'PHONEPE', 'NETBANKING', 'UPI_COLLECT', 'IMPS', 'NEFT', 'FK_UPI', 'UPI','SUPERPAY_LATER','SUPERPAY_IN_INSTALLMENT') and  ref.bank_reference_number is NOT NULL then 'ARN_GENERATED'
+		ELSE 'ARN_NOT_APPLICABLE'
+		END AS ARN_ISSUE_FLAG
+
+	,case
+		when upper(auth_state) = 'VOID' and upper(refund_mode) = 'CREDIT_CARD' then 'void_transaction'
+		else 'non_void' end as void_flag
+	
+	from
+	(
+		Select Distinct r.user_id
+		,r.order_id
+		,p.order_item_id
+		,r.parent_refund_id
+		,r.child_refund_id
+		, date(r.parent_created_at) as parent_created_at
+		,r.completed_time
+		,r.child_created_at
+		,r.child_updated_at
+		,r.promise_date
+		,r.bank_reference_number
+
+		,r.status as refund_status
+		,CASE
+		WHEN UPPER(r.status) IN ('COMPLETED') THEN 'Completed'
+		WHEN UPPER(r.status) IN ('CLONED', 'FAILED', 'CLONE_REQUESTED') THEN 'Failed'
+		WHEN UPPER(r.status) IN ('CANCELLED') THEN 'Cancelled'
+		WHEN UPPER(r.status) IN ('INIT') THEN 'Init'
+		WHEN UPPER(r.status) IN ('PICKED', 'PROCESSING') THEN 'Processing'
+		ELSE r.status
+		END AS refund_final_status
+
+		,CASE
+		WHEN UPPER(r.status) IN ('COMPLETED') THEN 'Completed'
+		WHEN UPPER(r.status) IN ('FAILED') THEN 'Failed'
+		WHEN UPPER(r.status) IN ('CANCELLED') THEN 'Cancelled'
+		WHEN UPPER(r.status) IN ('CLONED', 'CLONE_REQUESTED') THEN 'CLONED'
+		WHEN UPPER(r.status) IN ('INIT','PICKED', 'PROCESSING') THEN 'Stuck'
+		ELSE r.status
+		END AS refund_final_status_updated
+
+		,r.refund_mode
+		,r.pg_id,
+		case when r.pg_id in ('cfa_juspay_dmi_emi' ,'cfa_juspay_fibe_emi', 'cfa_juspay_abfl_emi', 'cfa_juspay_chola_emi', 'cfa_juspay_tvs_emi')
+				then 'Yes' 
+				else 'No'
+				end as flipkart_emi_flag
+		
+		,r.bank_name
+		,r.refund_gateway
+		,r.refund_type
+		,r.refund_reason
+		,case when r.refund_reason is null then "NA"
+			when r.refund_reason in ('mp_cancellation', 'shield_cancellation', 'seller_cancellation','USER_CANCELLATION', 'cancellation_requested') then "Cancellation"
+			when r.refund_reason in ('undelivered','courier_return','wait_reship') then "RTO"
+			when r.refund_reason in ('customer_return') then "Return"
+			when r.refund_reason in ('nw_adonc_auto_refund') then "Adonc"
+			else "Others" end as refund_reason_flag
+
+
+			
+		,r.promise_date
+		,refund_amount/100 as refund_amount
+		,f.auth_state
+		,coalesce(p.sales_channel, f.transaction_source) as transaction_source
+		,CASE
+			WHEN TIMESTAMP_DIFF(completed_time, parent_created_at, HOUR) > 72 THEN '5. >72 Hrs'
+			WHEN TIMESTAMP_DIFF(completed_time, parent_created_at, HOUR) > 48 THEN '4. 48 To 72 Hrs'
+			WHEN TIMESTAMP_DIFF(completed_time, parent_created_at, HOUR) > 24 THEN '3. 24 To 48 Hrs'
+			WHEN TIMESTAMP_DIFF(completed_time, parent_created_at, HOUR) >= 0 THEN '2. 0 To 24 Hrs'
+			WHEN TIMESTAMP_DIFF(completed_time, parent_created_at, HOUR) < 0 THEN '1.Pre_Refund'
+			ELSE '0. No Refund'
+		END AS refund_complition_bucket
+		,case
+			when TIMESTAMP_DIFF(promise_date, parent_created_at, HOUR) > 72 then '5. >72 Hrs'
+			when TIMESTAMP_DIFF(promise_date, parent_created_at, HOUR) > 48 then '4. 48 To 72 Hrs'
+			when TIMESTAMP_DIFF(promise_date, parent_created_at, HOUR) > 24 then '3. 24 To 48 Hrs'
+			when TIMESTAMP_DIFF(promise_date, parent_created_at, HOUR) >= 0 then '2. 0 To 24 Hrs'
+			when TIMESTAMP_DIFF(promise_date, parent_created_at, HOUR) < 0 then '1.Pre_Refund'
+		 else '0. No Refund ' end as promise_sla_refund_bucket
+
+		,case
+			when TIMESTAMP_DIFF(child_updated_at,parent_created_at, HOUR) > 72 then '7. >72 Hrs'
+			when TIMESTAMP_DIFF(child_updated_at,parent_created_at, HOUR) > 48 then '6. 48 To 72 Hrs'
+			when TIMESTAMP_DIFF(child_updated_at,parent_created_at, HOUR) > 24 then '5. 24 To 48 Hrs'
+			when TIMESTAMP_DIFF(child_updated_at,parent_created_at, HOUR) > 8 then  '4. 8 To 24 Hrs'
+			when TIMESTAMP_DIFF(child_updated_at,parent_created_at, HOUR) > 4 then  '3. 4 To 8 Hrs'
+			when TIMESTAMP_DIFF(child_updated_at,parent_created_at, HOUR) >= 0 then  '2. 0 To 4 Hrs'
+			when TIMESTAMP_DIFF(child_updated_at,parent_created_at, HOUR) < 0 then  '< 0 hrs'
+		else 'NA' end as refund_init_completion_bucket
+		, CASE
+			WHEN TIMESTAMP_DIFF(child_updated_at, parent_created_at, DAY) <= 2 THEN '0 - 2 days'
+			WHEN TIMESTAMP_DIFF(child_updated_at, parent_created_at, DAY) > 2 AND 
+				 TIMESTAMP_DIFF(child_updated_at, parent_created_at, DAY) <= 5 THEN '> 2 days'
+			WHEN TIMESTAMP_DIFF(child_updated_at, parent_created_at, DAY) > 5 AND 
+				 TIMESTAMP_DIFF(child_updated_at, parent_created_at, DAY) <= 10 THEN '> 5 days'
+			WHEN TIMESTAMP_DIFF(child_updated_at, parent_created_at, DAY) > 10 THEN '> 10 days'
+			ELSE 'NA'
+		  END AS overall_ageing_Stuck
+		  
+		,Row_number() over (partition by r.order_id,r.parent_refund_id order by r.child_updated_at Asc) as ref_asc_rank
+		,Row_number() over (partition by r.order_id,r.parent_refund_id order by r.child_updated_at Desc) as ref_desc_rank
+
+		,COALESCE(p.instrument_type, f.instrument_type, p1.instrument_type, p2.instrument_type) as instrument_type
+		,COALESCE(p.payment_instrument, f.payment_instrument, p1.payment_instrument, p2.payment_instrument) as payment_instrument
+		,coalesce(p.payment_mode, p1.payment_mode) as payment_mode
+
+		From bigfoot_external_neo.cp_payments__fkpg_child_refund_base_history_fact as r
+
+		Left Join (select transaction_id, instrument_type, payment_instrument,auth_state ,transaction_source from bigfoot_external_neo.cp_payments__fkpg_forward_transaction_base_history_fact 
+		where date(transaction_time) >='2025-01-01') as f
+		ON r.forward_transaction_id = f.transaction_id
+
+		left join (select transaction_id, instrument_type, payment_instrument,payment_mode ,order_item_id ,sales_channel  from bigfoot_external_neo.cp_bi_prod_sales__forward_payments_365_fact 
+		where unit_creation_date_key > 20250101) as p
+		on r.forward_transaction_id = p.transaction_id
+
+		LEFT JOIN (select transaction_id, instrument_type, payment_instrument,payment_mode from bigfoot_external_neo.cp_bi_prod_sales__forward_payments_fact 
+		where unit_creation_date_key >= 20250101) AS p1
+		ON r.forward_transaction_id = p1.transaction_id
+
+		left join (select transaction_id, payment_instrument, instrument_type,auth_state from bigfoot_external_neo.cp_payments__fkpg_forward_transaction_base_fact 
+		where transaction_date_key > 20250101) AS p2
+		on r.forward_transaction_id = p2.transaction_id
+
+		Where date(r.parent_created_at) >= "2025-04-01"
+	) as ref
+	Where ref_desc_rank = 1
+),
+
+pymnt_srce as
+(
+	select checkout_id,
+	count(distinct payment_type) as pymnt_cnt,
+	max(payment_type) as payment_type_1
+	
+	from 
+	(
+		select checkout_Id,
+		case when payment_instrument in ('FLIPKART_FINANCE', 'UPI_COLLECT', 'UPI_INTENT', 'DEBIT', 'CREDIT', 'EMI', 'RTGS', 'PHONEPE', 'DYNAMIC_QR', 'NET', 'FK_UPI', 'SUPERPAY_LATER','SUPERPAY_IN_INSTALLMENT','LOAN') then "Pre-paid"
+		when payment_instrument in ('COD') then "COD"
+		when payment_instrument in ('EGV', 'EGV_WALLET', 'WALLET', 'COIN') then "EGV/Wallet/Coin"
+		else "Others" end as payment_type,
+		count(distinct transaction_id) as txn_cnt
+		
+		from bigfoot_external_neo.cp_payments__fkpg_forward_transaction_base_history_fact
+		where  date(transaction_time) >= '2025-01-01'
+		
+		group by checkout_Id,
+		case when payment_instrument in ('FLIPKART_FINANCE', 'UPI_COLLECT', 'UPI_INTENT', 'DEBIT', 'CREDIT', 'EMI', 'RTGS', 'PHONEPE', 'DYNAMIC_QR', 'NET', 'FK_UPI', 'SUPERPAY_LATER','SUPERPAY_IN_INSTALLMENT','LOAN') then "Pre-paid"
+		when payment_instrument in ('COD') then "COD"
+		when payment_instrument in ('EGV', 'EGV_WALLET', 'WALLET', 'COIN') then "EGV/Wallet/Coin"
+		else "Others" end
+	)
+	
+	group by checkout_id
+),
+
+order_data as
+( select 
+id,
+cast(is_shopsy_order as string) as is_shopsy_order,
+order_external_id,
+marketplace_id
+ from bigfoot_external_neo.cp_bi_prod_sales__forward_unit_history_fact as b
+ where order_date_key >= 20250101
+  )
+
+
+---------------
+select EXTRACT(YEAR FROM parent_created_at)  AS refund_year
+,EXTRACT(MONTH FROM parent_created_at) AS refund_month
+,EXTRACT(WEEK FROM parent_created_at)  +1 AS refund_week
+,rf.parent_created_at  AS  refund_init_date
+,date(rf.child_updated_at)  AS  refund_complete_date
+,rf.refund_status
+,rf.refund_final_status_updated
+,rf.mr_refund_flag
+,rf.refund_mode
+,rf.auth_state
+,rf.payment_mode
+,rf.instrument_type
+,rf.payment_instrument
+,rf.ref_amount_flag
+,rf.transaction_source
+,rf.pg_id,
+--rf.bank_name
+--,refund_amount
+rf.promise_sla_refund_bucket
+,rf.refund_init_completion_bucket
+,rf.overall_ageing_Stuck
+,rf.refund_complition_bucket
+,rf.ARN_ISSUE_FLAG
+,rf.void_flag
+,rf.refund_reason
+,rf.refund_reason_flag,
+rf.flipkart_emi_flag
+,case when pmt.pymnt_cnt is null then "NA"
+when pmt.pymnt_cnt = 1 then pmt.payment_type_1
+when pmt.pymnt_cnt > 1 then "Multi-payment" end as payment_type_final
+,count(distinct rf.user_id) as cx_count
+,count(distinct rf.order_id) as rf_orders
+,count(distinct rf.parent_refund_id) as p_refund_count
+,count(distinct rf.child_refund_id) as c_refund_count
+,sum(rf.refund_amount) as total_refund_amount,
+o.is_shopsy_order,
+o.marketplace_id
+From refnd as rf left join pymnt_srce pmt
+on rf.order_id = pmt.checkout_id
+left join order_data o
+on rf.order_id = o.order_external_id
+--where o.is_shopsy_order <> TRUE
+
+Group By EXTRACT(YEAR FROM parent_created_at) 
+,EXTRACT(MONTH FROM parent_created_at)
+,EXTRACT(WEEK FROM parent_created_at) +1
+,rf.parent_created_at
+,date(rf.child_updated_at) 
+,rf.refund_status
+,rf.mr_refund_flag
+,rf.refund_mode
+,rf.auth_state
+,rf.refund_final_status_updated
+,rf.auth_state
+,rf.payment_mode
+,rf.instrument_type
+,rf.payment_instrument
+,rf.refund_reason
+,rf.ref_amount_flag
+,rf.transaction_source
+,rf.pg_id,
+--rf.bank_name
+--,refund_amount
+rf.promise_sla_refund_bucket
+,rf.refund_init_completion_bucket
+,rf.overall_ageing_Stuck
+,rf.refund_complition_bucket
+,rf.ARN_ISSUE_FLAG
+,rf.void_flag
+,rf.refund_reason
+,rf.refund_reason_flag,
+o.is_shopsy_order,
+o.marketplace_id,
+rf.flipkart_emi_flag
+,case when pmt.pymnt_cnt is null then "NA"
+when pmt.pymnt_cnt = 1 then pmt.payment_type_1
+when pmt.pymnt_cnt > 1 then "Multi-payment" end
