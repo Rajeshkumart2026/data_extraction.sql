@@ -1,0 +1,41 @@
+with master_data as 
+(
+select 
+ a.account_id,
+ date(a.order_created_at) as Date,
+ extract( month from order_created_at) as Month,
+  format_date('%b', a.order_created_at) as month_name,
+ a.order_external_id, 
+ a.order_billing_amount, 
+a.analytic_business_unit,
+a.fulfillment_status
+from bigfoot_external_neo.cp_bi_prod_sales__forward_unit_history_fact AS a
+where a.order_date_key between 20250101 and 20250228 ),
+customer_month_counts as
+(
+select 
+    account_id,
+  count(distinct Month) as month_count
+  from master_data
+  group by 
+  account_id),
+  
+  customers_in_both_months as 
+  (
+	select account_id from 
+	customer_month_counts
+	where month_count = 2)
+	
+	select 
+	md.account_id,
+	md.month_name,
+	STRING_AGG( distinct md.analytic_business_unit, ', ') as analytics_units,
+	STRING_AGG(DISTINCT md.fulfillment_status, ', ') AS fulfillment_statuses
+	from master_data as md
+	where md.account_id IN ( select account_id from customers_in_both_months)
+	group by 
+	md.month_name,
+	md.account_id
+	order by 
+	md.account_id,
+	md.month_name limit 1000
