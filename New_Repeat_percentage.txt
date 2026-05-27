@@ -1,0 +1,325 @@
+with master_data as
+(
+select 
+Date(created_at) as Date,
+case_id,
+jeeves_vertical,
+sub_status,
+status,
+customer_state,
+request_type,
+upstream_brand,
+current_spd,
+ticket_history_status,
+ticket_history_sub_status,
+repair_spd
+from 
+bigfoot_external_neo.scp_jeeves__jeeves_ticket_call_bridge_fact ),
+count_group as 
+(
+select 
+a.Date,
+a.jeeves_vertical,
+a.status,
+a.request_type,
+ count(a.case_id) as claim_count,
+  sum(count(a.case_id)) over (partition by  a.Date,a.status, a.request_type) as total_claim_count
+from master_data as a where a.request_type is not null and a.date >= '2025-03-01'
+group by 
+a.Date,
+a.jeeves_vertical,
+a.status,
+a.request_type 
+
+) 
+select 
+e.Date,
+e.jeeves_vertical,
+e.status,
+e.request_type,
+e.claim_count,
+e.total_claim_count,
+round((e.claim_count / e.total_claim_count) * 100 ,2) as claim_percentage
+ from count_group as e limit 100
+ 
+ 
+ 
+ -----------------------------------------------
+ 
+ with master_data as
+(
+select 
+Date(created_at) as Date,
+case_id,
+jeeves_vertical,
+sub_status,
+status,
+customer_state,
+request_type,
+upstream_brand,
+current_spd,
+ticket_history_status,
+ticket_history_sub_status,
+repair_spd
+from 
+bigfoot_external_neo.scp_jeeves__jeeves_ticket_call_bridge_fact )
+select * from master_data limit 100
+
+
+---------------------------------
+ with master_data as
+(
+select 
+  Distinct(sub_status) as uniq_status,
+Date(created_at) as Date,
+case_id,
+jeeves_vertical,
+status,
+customer_state,
+request_type,
+upstream_brand,
+current_spd,
+ticket_history_status,
+ticket_history_sub_status,
+repair_spd
+from 
+bigfoot_external_neo.scp_jeeves__jeeves_ticket_call_bridge_fact ),
+order_data as
+(
+select 
+c.Date,
+c.case_id,
+c.jeeves_vertical,
+c.uniq_status,
+row_number() over  (partition by c.case_id order by c.Date) as rn
+ from master_data as c)
+  select 
+d.Date,
+d.case_id,
+d.jeeves_vertical,
+d.uniq_status,
+d.rn,
+lag(case_id) over (Partition by d.Date order by d.case_id,  d.rn, d.uniq_status) as case_lag
+  from order_data as d
+   limit 1000
+  
+
+---------------------------------
+
+with month_data as
+(
+SELECT 
+            e.case_id,
+            Date(e.registered_date) as Date,
+	 	      e.state_name,
+     	     e.sub_activity,
+	    	 e.last_sub_activity,
+	         e.breach_bucket,
+	         e.outcome,
+             e.primary_issue_1,
+	         e.brand_name,
+   			case 
+   			when date_trunc(date(e.registered_date), month) = date_trunc(CURRENT_DATE(), month)
+            then 'This_month'
+            when date_trunc(date(e.registered_date), month) = date_trunc(date_sub(CURRENT_DATE(), interval 1 month), month) then 'last_month'
+  end as month_category
+        FROM 
+            bigfoot_external_neo.scp_jeeves__jeeves_closures_and_sales_fact AS e
+  )
+  select 
+  month_category,
+  count(case_id) as total_cases,
+  count(case when breach_bucket = "No_Breach" then case_id end ) as resolved_cases,
+  count(case when outcome != "No_Breach"  then case_id end) as unresolved_cases,
+  round(100 * count(case when breach_bucket = 'No_Breach' then case_id end)/ nullif(count(case_id),0),2) as resolution_rate
+  from month_data
+  where month_category is not null
+  group by month_category
+  
+------------------
+
+total_avg week performance: 
+
+WITH Weekly_data AS (
+        SELECT
+             seller_id,
+            DATE(registered_date) AS Date,
+           extract(Week from date(registered_date)) as week_number,
+            product_selling_price,
+                    product_service_category,
+          FROM bigfoot_external_neo.scp_jeeves__jeeves_closures_and_sales_fact 
+    ),
+  category_weekly_total as
+  (
+SELECT
+	week_number,
+	product_service_category,
+	count(DISTINCT seller_id) as distinct_seller,
+	sum(product_selling_price ) as total_selling_price
+from  Weekly_data 
+group by 
+week_number,
+product_service_category
+	),
+	Weekly_total as
+	(
+	  select 
+	 week_number,
+	  sum(product_selling_price) as total_selling_price_weekly
+	  from Weekly_data 
+	  group by 
+	  week_number
+	  )
+	 select 
+	 c.week_number,
+	 c.product_service_category,
+	 c.total_selling_price,
+	 d. total_selling_price_weekly,
+	 safe_divide(c.total_selling_price, c.distinct_seller ) as avg_selling_price_category,
+	 round((c.total_selling_price / d.total_selling_price_weekly ) * 100, 2) as percentage_of_week
+	 from category_weekly_total as c
+	 join  Weekly_total as d
+	 on c.week_number = d.week_number
+	 
+
+-----------
+Monthly Lag:
+
+WITH Monthly_data AS (
+        SELECT
+             seller_id,
+            DATE(registered_date) AS Date,
+           extract(year from registered_date ) as year_number,
+           extract(Month from date(registered_date)) as month_number,
+            product_selling_price,
+                    product_service_category,
+          FROM bigfoot_external_neo.scp_jeeves__jeeves_closures_and_sales_fact 
+    ),
+  category_Monthlyly_total as
+  (
+select 
+	product_service_category,
+	month_number,
+	year_number,
+	sum(product_selling_price) as total_selling_price_month
+	from Monthly_data
+	group by 
+	product_service_category,
+	month_number,
+	year_number
+	),
+	ranked_monthly_data as
+	(
+	  select  *,
+	  lag(total_selling_price_month, 1, 0) over (partition by product_service_category order by year_number, month_number ) as previous_month_total
+	  from category_Monthlyly_total )
+	 select 
+	 year_number,
+	month_number,
+	product_service_category,
+	total_selling_price_month,
+	previous_month_total,
+	(total_selling_price_month - previous_month_total ) as monthly_difference,
+	case when 
+	previous_month_total = 0 then Null
+	else round(((total_selling_price_month -previous_month_total) / previous_month_total ) * 100, 2)
+	end as percentage_change_vs_previous_month
+	from ranked_monthly_data 
+	order by 
+	product_service_category,
+	year_number,
+	month_number
+	
+	
+	
+	----------------------------------
+	
+	WITH Monthly_data AS (
+        SELECT
+             seller_id,
+            DATE(registered_date) AS Date,
+           extract(year from registered_date ) as year_number,
+           extract(Month from date(registered_date)) as month_number,
+            product_selling_price,
+             product_service_category,
+          FROM bigfoot_external_neo.scp_jeeves__jeeves_closures_and_sales_fact 
+    ),
+  category_Monthlyly_total as
+  (
+select 
+	product_service_category,
+	month_number,
+	year_number,
+	sum(product_selling_price) as total_selling_price_month
+	from Monthly_data
+	group by 
+	product_service_category,
+	month_number,
+	year_number
+	),
+	ranked_monthly_data as
+	(
+	  select  *,
+	  lag(total_selling_price_month, 1, 0) over (partition by product_service_category order by year_number, month_number ) as previous_month_total,
+	  lag(total_selling_price_month, 12,0) over (partition by product_service_category order by 
+				year_number, month_number) as previous_year_same_month_total
+	  from category_Monthlyly_total )
+	 select 
+	 year_number,
+	month_number,
+	product_service_category,
+	total_selling_price_month,
+	previous_month_total,
+	round( safe_divide((total_selling_price_month - previous_month_total ) * 100, previous_month_total ),2) as percentage_change_previous_month,
+	round(safe_divide((total_selling_price_month - previous_year_same_month_total) * 100 , previous_year_same_month_total), 2) as percentage_change_vs_previous_year
+	from ranked_monthly_data 
+	order by 
+	product_service_category,
+	year_number,
+	month_number
+	
+	-----------------
+	Moving average:  
+	
+	WITH Monthly_data AS (
+        SELECT
+             seller_id,
+            DATE(registered_date) AS Date,
+           extract(year from registered_date ) as year_number,
+           extract(Month from date(registered_date)) as month_number,
+            product_selling_price,
+             product_service_category,
+          FROM bigfoot_external_neo.scp_jeeves__jeeves_closures_and_sales_fact 
+    ),
+  category_Monthlyly_total as
+  (
+select 
+	product_service_category,
+	month_number,
+	year_number,
+	sum(product_selling_price) as total_selling_price_month
+	from Monthly_data
+	group by 
+	product_service_category,
+	month_number,
+	year_number
+	),
+	ranked_monthly_data as
+	(
+	  select  *,
+	row_number() over (partition by product_service_category order by year_number, month_number ) as rn
+	  from category_Monthlyly_total )
+	  	  select 
+	  rd.year_number,
+	  rd.month_number,
+	  rd.product_service_category,
+	  rd.total_selling_price_month,
+	  avg(rd.total_selling_price_month)  over (partition by rd.product_service_category 											   order by rd.year_number, rd.month_number 
+          rows between 2 PRECEDING and current row
+		) as moving_average_3_months
+				from ranked_monthly_data as rd 
+			group by
+			rd.total_selling_price_month,
+			rd.product_service_category,
+			rd.year_number,		
+		rd.month_number
