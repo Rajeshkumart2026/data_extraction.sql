@@ -1,0 +1,556 @@
+------Refund_contact------------shopsy_BBD
+with sessions as
+(
+	select * 
+	
+	from 
+	(
+		select session_id,
+		incident_id,
+		partner_location,
+		agent_profile,
+		agent_id,
+		completed_at,
+		ucid,
+		agent_name,
+		session_rank
+		
+		from 
+		(
+			Select distinct s.session_id,
+			s.incident_id,
+			case when s.agent_centre in ('IENGERIZER_DEHRADUN') then 'IENERGIZER_DEHRADUN'
+				 when s.agent_centre in ('TP_MOHALI') then 'TELE_PERFORMANCE_MOHALI' 
+				 else s.agent_centre end as partner_location,
+			s.agent_profile,
+			s.agent_id,
+			date(s.completed_at) as completed_at,
+			concat("$",s.ucid) as ucid,
+			s.agent_name,
+			row_number() over (partition by s.session_id order by s.incident_id) as session_rank
+
+			from bigfoot_external_neo.mp_cs__session_data_new_fact s
+			
+			where date(completed_at) >= '2025-08-01' 
+			and incident_id not in ('')
+		)AA
+		
+		group by session_id,incident_id,partner_location,agent_profile,agent_id,completed_at,ucid,agent_name,session_rank
+	
+	)xx
+	where session_rank = 1
+),
+
+profiles as
+(
+	select distinct
+	deliverygroup,
+	ldap_id,
+	LOB,
+	sub_lob,	
+	partnercenter,
+	channel,
+	day_level_snap,
+	case when (partnercenter in ('Startek Kolkata','TechM Noida') and LOB in ('FRM','FRM OCR')) then TRUE else FALSE end as FRM_OCR_Flag
+	
+	from fdp_uploads.ds_fkint_scp_oms_cx_mst_employee_hc_2024_Q1_BQ_1_0
+	
+	union all
+	
+	select distinct deliverygroup,
+	ldap_id,
+	LOB,
+	sub_lob,	
+	partnercenter,
+	channel,
+	day_level_snap,
+	case when (partnercenter in ('Startek Kolkata','TechM Noida') and LOB in ('FRM','FRM OCR')) then TRUE else FALSE end as FRM_OCR_Flag
+	
+	from bigfoot_external_neo.scp_oms__cx_mst_employee_fact
+),
+
+Inc as
+(
+	select distinct incident_id,
+	order_external_id,
+	SPLIT(order_item_id_list, ",")[ordinal(1)] as order_item_id_list,
+	incident_creation_time,
+	issue_type,
+	sub_issue_type,
+	sub_sub_issue_type,
+	blacklist_flag,
+	resolution_deadline,
+	incident_created_by,
+	current_queue_name,
+	incident_first_solved_time,
+	incident_last_solved_time,
+	incident_first_solved_agent_id,
+	resolution_deadline_breached,
+	customer_id,
+	lockin_flag,
+	incident_channel,
+	CASE WHEN resolution_deadline_breached ='No Promise Made' THEN 'OCR' ELSE '1CR' end as ocr_classification
+
+	from
+	bigfoot_external_neo.mp_cs__ims_incident_hive_fact
+
+	WHERE upper(tenant) = 'CS'
+	AND date(incident_creation_time) >= '2025-01-01'
+	AND current_queue_name <> 'Reviews'
+	AND sub_sub_issue_type not in ('Non Pickup related issues','Proactive Resolution', 'Asked Wishmaster to follow the BYOD check - Pickup the Product', 'Asked Wishmaster to Override', 'Asked Wishmaster to follow the BYOD check - Reject the pickup')
+),
+
+orders as
+(
+	select distinct o.order_external_id,
+	o.order_item_id,
+	o.analytic_business_unit,
+	o.analytic_category,
+	o.marketplace_id,
+	o.type,
+	o.analytic_super_category,
+	o.analytic_sub_category,
+	o.is_shopsy_order,
+	o.analytic_vertical,
+	case when o.is_alpha_seller is TRUE then "Alpha" else "MP" end as is_alpha_seller,
+--		o.brand,
+	date(o.approved_date_time) as approved_date_time,
+	case when o.analytic_vertical in ('AirConditioner','Refrigerator','Television','WashingMachineDryer','MicrowaveOven') then "LA5" else "Non-LA5" end as LA5_flag,
+--		case when datediff(to_date(o.initial_promise_date_time),to_date(o.approved_date_time)) < 2 then 1 else 0 end as SDD_NDD_flag,
+--	case when ff.fulfill_item_unit_size = 'Large' then 'large' else "Non-Large" end as Large_SC_flag,
+	case when o.gmv is null then "NA"
+	when o.gmv <= 500 then "<500"
+	when o.gmv <= 1000 then "500-1k"
+	when o.gmv <= 2000 then "1k-2k"
+	when o.gmv <= 5000 then "2k-5k"
+	when o.gmv <= 10000 then "5k-10k"
+	when o.gmv <= 20000 then "10k-20k"
+	else "20k+" end as asp_flag,
+--	o.brand,
+--	geo.zone as zone1,
+	o.city_tier,
+	slot_fact.slot_changed_by,
+	slot_fact.unified_promise_datetime,
+	slot_fact.breach_bucket,
+	slot_fact.breached_asset_reason,
+	slot_fact.service_profile
+
+	from bigfoot_external_neo.cp_bi_prod_sales__forward_unit_history_fact O 
+	
+	LEFT JOIN
+	(
+		select data.fulfill_item_unit_order_item_unit_mapping.order_item_unit_mapping_external_id AS order_item_unit_id_string
+		,data.Fulfill_Item_Unit_Size AS fulfill_item_unit_size
+		,data.fulfill_item_unit_fulfill_item.Fulfill_Item_Delivery_Type as fulfill_item_delivery_type
+
+		FROM bigfoot_snapshot.dart_fkint_scp_fulfillment_fulfill_item_unit_7_view_total as fiu
+
+		where date(TIMESTAMP_MILLIS(updatedat)) >= '2025-01-01'
+	) as ff
+	ON O.id = ff.order_item_unit_id_string
+	
+--	left join bigfoot_external_neo.scp_ekl__logistics_geo_hive_dim geo
+--	ON cast(geo.pincode as STRING) = cast(o.pincode as STRING)
+	
+	left join bigfoot_external_neo.scp_fulfillment__sc_large_breach_90_fact slot_fact
+	on o.id = slot_fact.fulfill_item_unit_id
+	
+	where order_date_key >= 20250101
+),
+
+refund as 
+(
+	Select ref.*
+	,case
+	when ref_asc_rank_parent =1 and ref_desc_rank_parent = 1 then 'Single_Refund'
+	else 'Multiple_Refund' end as mr_refund_flag
+  	,case when ref.refund_reason is null then "NA"
+			when ref.refund_reason in ('mp_cancellation', 'shield_cancellation', 'seller_cancellation','USER_CANCELLATION', 'cancellation_requested') then "Cancellation"
+			when ref.refund_reason in ('undelivered','courier_return','wait_reship') then "RTO"
+			when ref.refund_reason in ('customer_return') then "Return"
+			when ref.refund_reason in ('nw_adonc_auto_refund') then "Adonc"
+			else "Others" end as refund_reason_flag
+	,case
+	when ref.refund_amount > 10000 then '7. 10K_Plus'
+	when ref.refund_amount between 5000 and 10000 then '6. 5k_1k'
+	when ref.refund_amount between 3000 and 5000 then '5. 3k_5k'
+	when ref.refund_amount between 1500 and 3000 then '4. 1.5k_3k'
+	when ref.refund_amount between 1000 and 1500 then '3. 1k_1.5k'
+	when ref.refund_amount between 500 and 1000 then '2. 500_1k'
+	when ref.refund_amount < 500 then '1. Less_500'
+	else cast(ref.refund_amount as string) end as ref_amount_flag
+
+	--,Row_Number() over (partition by ref.order_id, ref.order_item_id order by ref.parent_created_at asc) as ref_asc_rank_parent
+
+	,case 
+		when upper(ref.refund_mode) in('CREDIT_CARD_EMI', 'DEBIT_CARD', 'UPI_INTENT', 'CREDIT_CARD', 'PHONEPE', 'NETBANKING', 'UPI_COLLECT', 'IMPS', 'NEFT', 'FK_UPI', 'UPI','SUPERPAY_LATER','SUPERPAY_IN_INSTALLMENT') and  ref.bank_reference_number is NULL then 'ARN_NOT_GENERATED'
+		when upper(ref.refund_mode) in('CREDIT_CARD_EMI', 'DEBIT_CARD', 'UPI_INTENT', 'CREDIT_CARD', 'PHONEPE', 'NETBANKING', 'UPI_COLLECT', 'IMPS', 'NEFT', 'FK_UPI', 'UPI','SUPERPAY_LATER','SUPERPAY_IN_INSTALLMENT') and  ref.bank_reference_number is NOT NULL then 'ARN_GENERATED'
+		ELSE 'ARN_NOT_APPLICABLE'
+		END AS ARN_ISSUE_FLAG
+
+	,case
+		when upper(auth_state) = 'VOID' and upper(refund_mode) = 'CREDIT_CARD' then 'void_transaction'
+		else 'non_void' end as void_flag
+	
+	from
+	(	
+		Select distinct r.user_id
+		,r.order_id
+		,r.parent_refund_id
+		,r.child_refund_id
+		,r.parent_created_at
+		,r.completed_time
+		,r.child_created_at
+		,r.child_updated_at
+		,r.status as refund_status
+		,CASE
+		WHEN UPPER(r.status) IN ('COMPLETED') THEN 'Completed'
+		WHEN UPPER(r.status) IN ('CLONED', 'FAILED', 'CLONE_REQUESTED') THEN 'Failed'
+		WHEN UPPER(r.status) IN ('CANCELLED') THEN 'Cancelled'
+		WHEN UPPER(r.status) IN ('INIT') THEN 'Init'
+		WHEN UPPER(r.status) IN ('PICKED', 'PROCESSING') THEN 'Processing'
+		ELSE r.status
+		END AS refund_final_status
+
+		,CASE
+		WHEN UPPER(r.status) IN ('COMPLETED') THEN 'Completed'
+		WHEN UPPER(r.status) IN ('CLONED', 'FAILED', 'CLONE_REQUESTED') THEN 'Failed'
+		WHEN UPPER(r.status) IN ('CANCELLED') THEN 'Cancelled'
+		WHEN UPPER(r.status) IN ('INIT','PICKED', 'PROCESSING') THEN 'Stuck'
+		ELSE r.status
+		END AS refund_final_status_updated
+
+		,r.refund_mode
+		,r.pg_id,
+		case when r.pg_id in ('cfa_juspay_dmi_emi' ,'cfa_juspay_fibe_emi', 'cfa_juspay_abfl_emi', 'cfa_juspay_chola_emi', 'cfa_juspay_tvs_emi')
+				then 'Yes' 
+				else 'No'
+				end as flipkart_emi_flag
+		,r.bank_name
+		,r.refund_gateway
+		,r.refund_type
+		,r.refund_reason
+		,r.promise_date
+		,refund_amount/100 as refund_amount
+		,r.bank_reference_number
+
+
+		,coalesce(f.auth_state, p2.auth_state) as auth_state
+		,coalesce(p.sales_channel, f.transaction_source) as transaction_source
+
+		--,Row_Number() over (partition by r.order_id,r.parent_refund_id order by r.child_updated_at Asc) as ref_asc_rank
+		--,Row_Number() over (partition by r.order_id,r.parent_refund_id order by r.child_updated_at Desc) as ref_desc_rank
+
+		,Row_Number() over (partition by r.order_id order by r.parent_created_at Asc) as ref_asc_rank_parent
+		,Row_Number() over (partition by r.order_id order by r.parent_created_at Desc) as ref_desc_rank_parent
+		,Row_Number() over (partition by r.order_id order by r.refund_amount Desc) as ref_amount_desc
+
+
+
+
+		,COALESCE(p.instrument_type, f.instrument_type, p1.instrument_type, p2.instrument_type) as instrument_type
+		,COALESCE(p.payment_instrument, f.payment_instrument, p1.payment_instrument, p2.payment_instrument) as payment_instrument
+		,coalesce(p.payment_mode, p1.payment_mode) as payment_mode
+
+	--From bigfoot_external_neo.cp_payments__fkpg_child_refund_base_history_fact as r
+		From bigfoot_external_neo.cp_payments__fkpg_child_refund_base_fact as r
+
+	Left Join (select transaction_id, instrument_type, payment_instrument,auth_state ,transaction_source from bigfoot_external_neo.cp_payments__fkpg_forward_transaction_base_history_fact 
+		where date(transaction_time) >='2025-08-01') as f
+		ON r.forward_transaction_id = f.transaction_id
+
+		left join (select transaction_id, instrument_type, payment_instrument,payment_mode ,order_item_id ,sales_channel  from bigfoot_external_neo.cp_bi_prod_sales__forward_payments_365_fact 
+		where unit_creation_date_key > 20250801) as p
+		on r.forward_transaction_id = p.transaction_id
+
+		LEFT JOIN (select transaction_id, instrument_type, payment_instrument,payment_mode from bigfoot_external_neo.cp_bi_prod_sales__forward_payments_fact 
+		where unit_creation_date_key >= 20250801) AS p1
+		ON r.forward_transaction_id = p1.transaction_id
+
+		left join (select transaction_id, payment_instrument, instrument_type,auth_state from bigfoot_external_neo.cp_payments__fkpg_forward_transaction_base_fact 
+		where transaction_date_key > 20250801) AS p2
+		on r.forward_transaction_id = p2.transaction_id
+
+		Where date(r.parent_created_at) >= "2025-04-01"
+	) as ref
+	Where ref_asc_rank_parent = 1
+),
+
+pymnt_srce as
+(
+	select checkout_id,
+	count(distinct payment_type) as pymnt_cnt,
+	max(payment_type) as payment_type_1
+	
+	from 
+	(
+		select checkout_Id,
+		case when payment_instrument in ('FLIPKART_FINANCE', 'UPI_COLLECT', 'UPI_INTENT', 'DEBIT', 'CREDIT', 'EMI', 'RTGS', 'PHONEPE', 'DYNAMIC_QR', 'NET', 'FK_UPI', 'SUPERPAY_LATER','SUPERPAY_IN_INSTALLMENT','LOAN') then "Pre-paid"
+		when payment_instrument in ('COD') then "COD"
+		when payment_instrument in ('EGV', 'EGV_WALLET', 'WALLET', 'COIN') then "EGV/Wallet/Coin"
+		else "Others" end as payment_type,
+		count(distinct transaction_id) as txn_cnt
+		
+		--from bigfoot_external_neo.cp_payments__fkpg_forward_transaction_base_history_fact
+		from bigfoot_external_neo.cp_payments__fkpg_forward_transaction_base_fact
+		where  date(transaction_time) >= '2025-01-01'
+		
+		group by checkout_Id,
+		case when payment_instrument in ('FLIPKART_FINANCE', 'UPI_COLLECT', 'UPI_INTENT', 'DEBIT', 'CREDIT', 'EMI', 'RTGS', 'PHONEPE', 'DYNAMIC_QR', 'NET', 'FK_UPI', 'SUPERPAY_LATER','SUPERPAY_IN_INSTALLMENT','LOAN') then "Pre-paid"
+		when payment_instrument in ('COD') then "COD"
+		when payment_instrument in ('EGV', 'EGV_WALLET', 'WALLET', 'COIN') then "EGV/Wallet/Coin"
+		else "Others" end
+	)
+	
+	group by checkout_id
+),
+
+lob_mapping_issue as
+(
+select contact_dt,
+agent_id,
+LOB,
+case when y.FK_cnt is null or y.hyp_cnt is null then "NA"
+	when (y.FK_cnt + y.hyp_cnt) = 0 then "NA"
+	when y.FK_cnt / (y.FK_cnt + y.hyp_cnt) > 0.6 then "FK"
+	else "Non-FK" end as FK_agent_flag from
+
+(
+	select completed_at as contact_dt,
+	agent_id,
+	LOB,
+	count(distinct session_Id) as session_cnt,
+	sum(HYP_flag) as hyp_cnt,
+	sum(FK_flag) as FK_cnt
+	
+	from
+	(
+		select S.session_id,
+		S.agent_id,
+		S.completed_at,
+		t.LOB,
+		case when upper(o.marketplace_id) = "HYPERLOCAL" then 1 else 0 end as HYP_flag,
+		case when upper(o.marketplace_id) = "FLIPKART" then 1 else 0 end as FK_flag
+		
+		from sessions S
+
+		join inc I
+		on S.incident_id = I.incident_id
+
+		left join profiles t
+		on upper(s.agent_id) = upper(t.ldap_id) and s.completed_at = t.day_level_snap
+
+		left join orders O
+		on I.order_external_id = O.order_external_id 
+		--AND (I.order_item_id_list = 'null' or O.order_item_id = I.order_item_id_list)
+	)x
+	
+	group by completed_at,
+	agent_id,
+	LOB
+	)y
+)
+
+
+select year1,
+month1,
+wk1,
+session_dt,
+--odr_yr,
+marketplace_id,
+is_shopsy_order,
+payment_type_final,
+payment_instrument,
+ARN_ISSUE_FLAG,
+void_flag,
+refund_status,
+refund_final_status_updated,
+--ref_amount_flag,
+refund_mode,
+--mr_refund_flag,
+refund_reason_flag,
+issue_type,
+sub_issue_type,
+sub_sub_issue_type,
+ssi,
+FRM_OCR_Flag,
+pg_id,
+--bank_name,
+flipkart_emi_flag,
+case when upper(marketplace_id) = "HYPERLOCAL" and FK_agent_flag = "Non-FK" then "Minutes"
+when LOB = "FK Minutes" and FK_agent_flag = "Non-FK" then "Minutes"
+else "Non-Minutes" end as Minutes_flag,
+count(distinct session_id) as contacts,
+count(distinct incident_id) as inc_cnt,
+count(distinct order_external_id) as odr_cnt,
+count(distinct customer_id) as acct_cnt
+
+from 
+(
+	select distinct S.session_id,
+	--S.partner_location,
+	--S.agent_profile,
+	--S.agent_id,
+	S.completed_at as session_dt,
+	extract(year from  completed_at) year1,
+	extract(month from completed_at) month1,
+	extract(week from completed_at) + 1 wk1,
+	--S.ucid,
+	--S.agent_name,
+	I.incident_id,
+	I.customer_id,
+	I.issue_type,
+	I.sub_issue_type,
+	I.sub_sub_issue_type,
+--	I.ocr_classification,
+--	I.lockin_flag,
+	concat(I.issue_type,'->',I.sub_issue_type,'->',I.sub_sub_issue_type) ssi,
+	case when T.deliverygroup = 'L1 Delivery' then 'L1 Delivery'
+		 when T.deliverygroup = 'L2 Delivery' then 'L2 Delivery' else 'Others' end as deliverygroup,
+--T.partnercenter,
+	T.LOB,
+--	T.SUB_LOB,
+--	T.channel,
+	T.FRM_OCR_Flag,
+	x.FK_agent_flag,
+	o.order_external_id,
+	o.order_item_id,
+--	o.initial_promise_date_time,
+--	o.final_promise_date_time,
+--	o.analytic_business_unit,
+	o.is_shopsy_order,
+	o.marketplace_id,
+--	o.is_alpha_seller,
+--	o.brand,
+--	o.type,
+	o.analytic_vertical,
+--	o.approved_date_time,
+--	o.asp_flag,
+	o.analytic_category,
+	o.analytic_super_category,
+	o.analytic_sub_category
+	,r.refund_status
+	,r.refund_final_status_updated
+--	,r.mr_refund_flag
+	,r.refund_mode
+--	,r.auth_state
+	,r.payment_mode
+	,r.instrument_type
+	,r.payment_instrument
+	---,order_payment_type
+	,r.refund_reason
+  	,r.refund_reason_flag
+	,r.ref_amount_flag
+	,r.transaction_source
+	,r.ARN_ISSUE_FLAG
+	,r.void_flag
+    ,r.pg_id
+	,r.bank_name,
+	r.flipkart_emi_flag
+	,case
+	when TIMESTAMP_DIFF(completed_at, parent_created_at, HOUR) > 72 then '9. >72 Hrs'
+	when TIMESTAMP_DIFF(completed_at, parent_created_at, HOUR) > 48 then '8. 48 To 72 Hrs'
+	when TIMESTAMP_DIFF(completed_at, parent_created_at, HOUR) > 24 then '7. 24 To 48 Hrs'
+	when TIMESTAMP_DIFF(completed_at, parent_created_at, HOUR) > 8 then '6. 8 To 24 Hrs'
+	when TIMESTAMP_DIFF(completed_at, parent_created_at, HOUR) > 4 then '5. 4 To 8 Hrs'
+	when TIMESTAMP_DIFF(completed_at, parent_created_at, HOUR) > 2 then '4. 2 To 4 Hrs'
+	when TIMESTAMP_DIFF(completed_at, parent_created_at, HOUR) > 1 then '3. 1 To 2 Hrs'
+	when TIMESTAMP_DIFF(completed_at, parent_created_at, HOUR) >= 0 then '2. 0 To 1 Hrs'
+	when TIMESTAMP_DIFF(completed_at, parent_created_at, HOUR) < 0 then '1. Pre_Refund'
+	else '0. No Refund ' end as contact_to_refund_bucket
+
+	,case
+		when TIMESTAMP_DIFF(completed_at, completed_time, HOUR) > 72 then '9. >72 Hrs'
+		when TIMESTAMP_DIFF(completed_at, completed_time, HOUR) > 48 then '8. 48 To 72 Hrs'
+		when TIMESTAMP_DIFF(completed_at, completed_time, HOUR) > 24 then '7. 24 To 48 Hrs'
+		when TIMESTAMP_DIFF(completed_at, completed_time, HOUR) > 8 then '6. 8 To 24 Hrs'
+		when TIMESTAMP_DIFF(completed_at, completed_time, HOUR) > 4 then '5. 4 To 8 Hrs'
+		when TIMESTAMP_DIFF(completed_at, completed_time, HOUR) > 2 then '4. 2 To 4 Hrs'
+		when TIMESTAMP_DIFF(completed_at, completed_time, HOUR) > 1 then '3. 1 To 2 Hrs'
+		when TIMESTAMP_DIFF(completed_at, completed_time, HOUR) >= 0 then '2. 0 To 1 Hrs'
+		when TIMESTAMP_DIFF(completed_at, completed_time, HOUR) < 0 then '1. Pre_Refund'
+	else '0. No Refund ' end as contact_to_complete_bucket
+
+	,case
+		when TIMESTAMP_DIFF(completed_at, promise_date, HOUR) > 72 then '9. >72 Hrs'
+		when TIMESTAMP_DIFF(completed_at, promise_date, HOUR) > 48 then '8. 48 To 72 Hrs'
+		when TIMESTAMP_DIFF(completed_at, promise_date, HOUR) > 24 then '7. 24 To 48 Hrs'
+		when TIMESTAMP_DIFF(completed_at, promise_date, HOUR) > 8 then '6. 8 To 24 Hrs'
+		when TIMESTAMP_DIFF(completed_at, promise_date, HOUR) > 4 then '5. 4 To 8 Hrs'
+		when TIMESTAMP_DIFF(completed_at, promise_date, HOUR) > 2 then '4. 2 To 4 Hrs'
+		when TIMESTAMP_DIFF(completed_at, promise_date, HOUR) > 1 then '3. 1 To 2 Hrs'
+		when TIMESTAMP_DIFF(completed_at, promise_date, HOUR) >= 0 then '2. 0 To 1 Hrs'
+		when TIMESTAMP_DIFF(completed_at, promise_date, HOUR) < 0 then '1. Pre_SLA'
+	else '0. No Refund ' end as contact_to_SLA_bucket,
+	pmt.pymnt_cnt,
+	case when pmt.pymnt_cnt is null then "NA"
+	when pmt.pymnt_cnt = 1 then pmt.payment_type_1
+	when pmt.pymnt_cnt > 1 then "Multi-payment" end as payment_type_final,
+	ROW_NUMBER() over (partition by S.session_id order by S.completed_at asc) as RNK
+
+	from sessions S
+
+	join inc I
+	on S.incident_id = I.incident_id
+
+	left join profiles t
+	on upper(s.agent_id) = upper(t.ldap_id) and s.completed_at = t.day_level_snap
+
+	left join orders O
+	on I.order_external_id = O.order_external_id 
+	AND (I.order_item_id_list = 'null' or O.order_item_id = I.order_item_id_list)
+	
+	left join refund r
+	on r.order_id = I.order_external_id
+	
+	left join pymnt_srce pmt
+	on pmt.checkout_id = I.order_external_id
+	
+	left join lob_mapping_issue x
+	on s.agent_id = x.agent_id
+	--and s.session_dt = x.contact_dt
+	
+	--where UPPER(o.marketplace_id) NOT IN ('HYPERLOCAL','RCBP' )
+	 --and o.is_shopsy_order <> TRUE
+)XX
+
+where rnk = 1
+
+and ssi in ("Refunds->Refund Related Enquiry->Refund Status Enquiry",
+"Refunds->Refund Related Issues->Refund stuck_Int/processing",
+"Refunds->Refund Related Issues->Refund completed but not reflecting",
+"Refunds->Refund Related Issues->Refund Failed/cancelled",
+"Refund Follow-ups->Gathered Offline Refund Details->NA",
+"Refunds->Refund Related Issues->Cancellation done but refund pending",
+"Flipkart Plus->Plus Price->Issues with Plus Price coins refund",
+"Refunds->Refund Related Issues->Refund Status Related",
+"Refunds->Refund Related Issues->Return Override")
+
+
+group by year1,
+month1,
+wk1,
+session_dt,
+marketplace_id,
+is_shopsy_order,
+payment_type_final,
+payment_instrument,
+ARN_ISSUE_FLAG,
+void_flag,
+refund_status,
+refund_final_status_updated,
+--ref_amount_flag,
+refund_mode,
+--mr_refund_flag,
+refund_reason_flag,
+issue_type,
+sub_issue_type,
+sub_sub_issue_type,
+ssi,
+FRM_OCR_Flag,
+pg_id,
+bank_name,
+flipkart_emi_flag,
+--SUB_LOB,
+LOB,
+FK_agent_flag 
