@@ -1,0 +1,139 @@
+ with master_policy as
+(
+  select * from
+  (
+select 
+ vas_policy_id,
+construct_title,
+policy_status,
+policy_purchase_date,
+policy_start_date,
+EXTRACT(Date from policy_start_date) as Date,
+EXTRACT(month from policy_start_date) as Month,
+EXTRACT(year from policy_start_date) as Year,
+policy_end_date,
+policy_type,
+plan_type,
+ CASE 
+  when upper(construct_title) like '%TEST%' then 'Testing'
+  when policy_type ="B2B" 
+  --and (upper(construct_title) like '%BRAND WARRANTY %' or
+	--      upper(construct_title) like '%BAND WARRANTY %' or
+	  -- upper(construct_title) like '%BRAND_WARRANTY %' or
+	   --upper(construct_title) like '%GANGNAM %' or
+         -- upper(construct_title) like '%PL%') then 'PL'
+ and Upper(COALESCE(sale_source, ' ')) In ( 'FLIPKART','FLIPKARTPLOFFLINE','GANGNAMRET','DIGITAL') and upper(coalesce(device_brand, ' ')) In ( 'FLIPKART SMARTBUY', 'MARQ BY FLIPKART', 'MOTOROLA', 'NOKIA', 'REALME TECHLIFE','SANSUI', 'THOMSON', 'MARQ', 'CARER', 'REALME TECH', 'MASTERCHEF', 'BEARDO', 'BILLION', 'THE MAN COMPANY', 'WROGN', 'HRX', 'REALME', 'KENSTAR') then 'PL'
+  when policy_type = "VAS" 
+  and (construct_title Like 'Complete Mobile Protection %' or
+  			construct_title Like 'Screen Protection %' or
+         construct_title Like 'Extended warranty for Mobile%' or
+ 		construct_title Like  'Complete Tablet Protection%' or 
+        construct_title Like 'Extended warranty for Tablet%') then 'CMP'
+  when policy_type = "VAS" 
+  and (construct_title Not Like 'Complete Mobile Protection %' or
+  			construct_title Not Like 'Screen Protection %' or
+         construct_title Not Like 'Extended warranty for Mobile%' or
+ 		construct_title Not Like  'Complete Tablet Protection%' or 
+        construct_title Not Like 'Extended warranty for Tablet%') then 'VAS'
+
+  else 'Others'
+  end as New_Plan,
+ device_brand,
+client_order_id,
+sale_source,
+registered_on,
+analytic_category,
+  row_number() over (partition by vas_policy_id order by policy_purchase_date Desc) as rn
+from  bigfoot_external_neo.scp_jeeves__vas_sales_base_fact 
+where extract(year from policy_start_date)  => 2025
+  )
+  where rn =1
+  ),
+  pivot_view as
+  (
+  select count(*) as total_count,
+  Format_date('%b', Date) as Month_Name,
+  b.Year,
+  b.New_Plan
+  from master_policy as b
+  group by 
+   Format_date('%b', Date),
+  b.Year,
+  b.New_Plan
+	)
+	select * from pivot_view
+	pivot ( sum(total_count)
+		   For Month_Name IN ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug','Sep', 'Oct', 'Nov', 'Dec' ))
+		   order by New_Plan
+		   
+		   
+		   
+---------------------------------
+
+
+ with master_policy as
+(
+select 
+distinct(vas_policy_id) as vas_policy_id,
+construct_title,
+policy_status,
+policy_purchase_date,
+  device_purchase_date,
+policy_start_date,
+  policy_selling_price,
+  excess_payment,
+   policy_selling_price -  excess_payment as actual_payment,
+EXTRACT(Date from policy_purchase_date) as Date,
+EXTRACT(month from policy_purchase_date) as Month,
+EXTRACT(year from policy_purchase_date) as Year,
+policy_end_date,
+policy_type,
+plan_type,
+ CASE 
+  when upper(construct_title) like '%TEST%' then 'Testing'
+  when policy_type ="B2B" 
+  --and (upper(construct_title) like '%BRAND WARRANTY %' or
+	--      upper(construct_title) like '%BAND WARRANTY %' or
+	  -- upper(construct_title) like '%BRAND_WARRANTY %' or
+	   --upper(construct_title) like '%GANGNAM %' or
+         -- upper(construct_title) like '%PL%') then 'PL'
+ and Upper(COALESCE(sale_source, ' ')) In ( 'FLIPKART','FLIPKARTPLOFFLINE','GANGNAMRET','DIGITAL') and upper(coalesce(device_brand, ' ')) In ( 'FLIPKART SMARTBUY', 'MARQ BY FLIPKART', 'MOTOROLA', 'NOKIA', 'REALME TECHLIFE','SANSUI', 'THOMSON', 'MARQ', 'CARER', 'REALME TECH', 'MASTERCHEF', 'BEARDO', 'BILLION', 'THE MAN COMPANY', 'WROGN', 'HRX', 'REALME', 'KENSTAR') then 'PL'
+  when policy_type = "VAS" 
+  and (construct_title Like 'Complete Mobile Protection %' or
+  			construct_title Like 'Screen Protection %' or
+         construct_title Like 'Extended warranty for Mobile%' or
+ 		construct_title Like  'Complete Tablet Protection%' or 
+        construct_title Like 'Extended warranty for Tablet%') then 'CMP'
+  when policy_type = "VAS" 
+  and (construct_title Not Like 'Complete Mobile Protection %' or
+  			construct_title Not Like 'Screen Protection %' or
+         construct_title Not Like 'Extended warranty for Mobile%' or
+ 		construct_title Not Like  'Complete Tablet Protection%' or 
+        construct_title Not Like 'Extended warranty for Tablet%') then 'VAS'
+  else 'Others'
+  end as New_Plan,
+ device_brand,
+client_order_id,
+sale_source,
+registered_on,
+analytic_category,
+  row_number() over (partition by vas_policy_id order by policy_purchase_date Desc) as rn
+from  bigfoot_external_neo.scp_jeeves__vas_sales_base_fact 
+where extract(YEAR from device_purchase_date)  >= 2025
+   ),
+  pivot_view as
+  (
+  select count(*) as total_count,
+  Format_date('%b', Date) as Month_Name,
+  b.Year,
+  b.New_Plan
+  from master_policy as b
+  group by 
+   Format_date('%b', Date),
+  b.Year,
+  b.New_Plan
+	)
+	select * from pivot_view
+	pivot ( sum(total_count)
+		   For Month_Name IN ('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug','Sep', 'Oct', 'Nov', 'Dec' ))
+		   order by New_Plan
