@@ -1,0 +1,229 @@
+WITH registration_data AS (
+    SELECT  DISTINCT
+        vas_claim_id,
+        policy_id,
+		case 
+		when UPPER(plan_name) Like '%TEST%' then 'Testing'
+		when policy_type = 'VAS' and 
+	(upper(construct_name) Like '%EXTENDED WARRANTY PLAN FOR AC%' or
+		upper(construct_name) Like '%MAINTENANCE PLAN%' or
+	upper(construct_name) Like '%FURNITURE MAINTENANCE%' or
+	 upper(construct_name) Like '%COMPLETE REF & WM PROTECTION 3 YEAR%' or
+	upper(construct_name) Like '%EXTENDED WARRANTY FOR LAPTOP%' or
+	upper(construct_name) Like '%EXTENDED WARRANTY 2%' or
+	upper(construct_name) Like '%EXTENDED WARRANTY 1%' or
+	upper(construct_name) Like '%DAMAGE PROTECTION%' or
+	 upper(construct_name) Like '%COMPLETE PROTECTION WASHING MACHINE%' or
+	 upper(construct_name) Like '%FURNITURE MAINTAINENCE PLAN%' or
+	upper(construct_name) Like '%DIAGNOSTIC%' or
+	upper(construct_name) Like '%COMPLETE TV PROTECTION%' or
+	upper(construct_name) Like '%COMPLETE PROTECTION REFRIGERATOR %' or
+	upper(construct_name) Like '%COMPLETE LAPTOP PROTECTION %' or
+	upper(construct_name) Like '%COMPLETE APPLIANCES PROTECTION%' or
+	upper(construct_name) Like '%CLEANING SERVICE%' or
+	upper(construct_name) Like '%MAINTENANCE PLAN%' or
+	 upper(plan_name) Like '%EXTENDED_WARRANTY_MICROWAVE OVEN%' or
+	upper(plan_name) Like '%COMPLETE_PROTECTION_REFRIGERATORS%' or
+	upper(plan_name) Like '%COMPLETE_PROTECTION_WASHING MACHINES%' or
+	upper(plan_name) Like '%COMPLETE_PROTECTION_TELEVISIONS%' or
+	 upper(plan_name) Like '%EXTENDED_WARRANTY_TELEVISIONS%' or
+	upper(plan_name) Like '%EXTENDED_WARRANTY_REFRIGERATORS%'  ) then 'VAS'
+		 when policy_type = 'VAS'  and 
+  (upper(construct_name) Like '%COMPLETE MOBILE PROTECTION%' or
+   upper(construct_name) Like '%SCREEN PROTECTION PLAN%' or
+	upper(construct_name) Like '%MOBILE%' or
+	upper(construct_name) Like '%TABLET%'
+  ) then 'CMP'
+	when policy_type = 'B2B' and
+	((upper(brand_name) IN ('FLIPKART SMARTBUY','MARQ BY FLIPKART','MOTOROLA','NOKIA',
+	'REALME TECHLIFE','MARQ','CARER','REALME TECH',
+'MASTERCHEF','BEARDO','BILLION','THE MAN COMPANY','WROGN','HRX','REALME','KENSTAR') and 
+upper(sales_channel) IN ('FLIPKART', 'DIGITAL', 'FLIPKARTPLOFFLINE','GANGNAMRET')) 
+or (upper(brand_name) IN ('SANSUI','THOMSON') 
+	and upper(sales_channel) IN ('FLIPKART', 'DIGITAL', 'FLIPKARTPLOFFLINE', 'GANGNAMRET') 
+	and kyi_repair_mode = 'Walk-in' ))
+ then 'PL'
+  else 'Others'
+  END as New_Plan,
+		claim_status,
+        vas_status,
+        vas_sub_status,
+        DATE(vas_claim_registered_timestamp) AS claim_date,
+        vas_claim_registered_timestamp,
+        vas_last_update_on,
+        plan_name,
+        sales_channel,
+        construct_name,
+        brand_name,
+        policy_type,
+        kyi_repair_mode
+    FROM bigfoot_external_neo.scp_jeeves__vas_claims_base_fact 
+    WHERE DATE(vas_claim_registered_timestamp) >= '2025-01-01'
+),
+filtered_data as
+(
+  select * 
+  from registration_data
+  where New_Plan NOT IN ('Testing', 'Others')
+  ),
+  Ranked_with_lag as
+  (
+	select *,
+	row_number() over (partition by policy_id order by vas_claim_registered_timestamp ) as rn,
+	lag(vas_claim_registered_timestamp) over (partition by policy_id order by  vas_claim_registered_timestamp) as prev_timestamp
+	from filtered_data
+	),  
+    Final_Jan_claims as
+  (
+	select * from 
+	Ranked_with_lag
+	where claim_date BETWEEN '2025-01-01' AND '2025-01-31'
+	)
+	select 
+	claim_date,
+	policy_id,
+	vas_claim_id,
+	case 
+	when rn = 1 then 'First_time'
+	Else 'Repeat'
+	end as claim_type,
+	case
+	when prev_timestamp is NOT NULL and TIMESTAMP_DIFF(vas_claim_registered_timestamp, prev_timestamp, DAY) = 0 then TRUE
+	ELSE
+	FALSE
+	end as same_day_repeat,
+	case when 
+	prev_timestamp is NOT NULl and TIMESTAMP_DIFF(vas_claim_registered_timestamp, prev_timestamp, DAY) <=7  then TRUE
+	else FALSE
+	end as day7_repeat,
+	New_Plan,
+    claim_status,
+    vas_status,
+    plan_name,
+    construct_name,
+    brand_name
+	from Final_Jan_claims
+	order by 
+		policy_id
+	
+	--------------------2nd-version--------------------------
+	
+	WITH registration_data AS (
+    SELECT  DISTINCT
+        vas_claim_id,
+        policy_id,
+		case 
+		when UPPER(plan_name) Like '%TEST%' then 'Testing'
+		when policy_type = 'VAS' and 
+	(upper(construct_name) Like '%EXTENDED WARRANTY PLAN FOR AC%' or
+		upper(construct_name) Like '%MAINTENANCE PLAN%' or
+	upper(construct_name) Like '%FURNITURE MAINTENANCE%' or
+	 upper(construct_name) Like '%COMPLETE REF & WM PROTECTION 3 YEAR%' or
+	upper(construct_name) Like '%EXTENDED WARRANTY FOR LAPTOP%' or
+	upper(construct_name) Like '%EXTENDED WARRANTY 2%' or
+	upper(construct_name) Like '%EXTENDED WARRANTY 1%' or
+	upper(construct_name) Like '%DAMAGE PROTECTION%' or
+	 upper(construct_name) Like '%COMPLETE PROTECTION WASHING MACHINE%' or
+	 upper(construct_name) Like '%FURNITURE MAINTAINENCE PLAN%' or
+	upper(construct_name) Like '%DIAGNOSTIC%' or
+	upper(construct_name) Like '%COMPLETE TV PROTECTION%' or
+	upper(construct_name) Like '%COMPLETE PROTECTION REFRIGERATOR %' or
+	upper(construct_name) Like '%COMPLETE LAPTOP PROTECTION %' or
+	upper(construct_name) Like '%COMPLETE APPLIANCES PROTECTION%' or
+	upper(construct_name) Like '%CLEANING SERVICE%' or
+	upper(construct_name) Like '%MAINTENANCE PLAN%' or
+	 upper(plan_name) Like '%EXTENDED_WARRANTY_MICROWAVE OVEN%' or
+	upper(plan_name) Like '%COMPLETE_PROTECTION_REFRIGERATORS%' or
+	upper(plan_name) Like '%COMPLETE_PROTECTION_WASHING MACHINES%' or
+	upper(plan_name) Like '%COMPLETE_PROTECTION_TELEVISIONS%' or
+	 upper(plan_name) Like '%EXTENDED_WARRANTY_TELEVISIONS%' or
+	upper(plan_name) Like '%EXTENDED_WARRANTY_REFRIGERATORS%'  ) then 'VAS'
+		 when policy_type = 'VAS'  and 
+  (upper(construct_name) Like '%COMPLETE MOBILE PROTECTION%' or
+   upper(construct_name) Like '%SCREEN PROTECTION PLAN%' or
+	upper(construct_name) Like '%MOBILE%' or
+	upper(construct_name) Like '%TABLET%'
+  ) then 'CMP'
+	when policy_type = 'B2B' and
+	((upper(brand_name) IN ('FLIPKART SMARTBUY','MARQ BY FLIPKART','MOTOROLA','NOKIA',
+	'REALME TECHLIFE','MARQ','CARER','REALME TECH',
+'MASTERCHEF','BEARDO','BILLION','THE MAN COMPANY','WROGN','HRX','REALME','KENSTAR') and 
+upper(sales_channel) IN ('FLIPKART', 'DIGITAL', 'FLIPKARTPLOFFLINE','GANGNAMRET')) 
+or (upper(brand_name) IN ('SANSUI','THOMSON') 
+	and upper(sales_channel) IN ('FLIPKART', 'DIGITAL', 'FLIPKARTPLOFFLINE', 'GANGNAMRET') 
+	and kyi_repair_mode = 'Walk-in' ))
+ then 'PL'
+  else 'Others'
+  END as New_Plan,
+		claim_status,
+        vas_status,
+        vas_sub_status,
+        DATE(vas_claim_registered_timestamp) AS claim_date,
+        vas_claim_registered_timestamp,
+        vas_last_update_on,
+        plan_name,
+        sales_channel,
+        construct_name,
+        brand_name,
+        policy_type,
+        kyi_repair_mode
+    FROM bigfoot_external_neo.scp_jeeves__vas_claims_base_fact 
+    WHERE DATE(vas_claim_registered_timestamp) >= '2025-01-01'
+),
+filtered_data as
+(
+  select * 
+  from registration_data
+  where New_Plan NOT IN ('Testing', 'Others')
+  ),
+  Ranked_with_lag as
+  (
+	select *,
+	row_number() over (partition by policy_id order by vas_claim_registered_timestamp ) as rn,
+	lag(vas_claim_registered_timestamp) over (partition by policy_id order by  vas_claim_registered_timestamp) as prev_timestamp
+	from filtered_data
+	),  
+	first_last_status as
+	(
+	  select policy_id,
+	  FIRST_VALUE(vas_status) over (partition by policy_id order by vas_claim_registered_timestamp ASC) as first_status,
+	  FIRST_VALUE(vas_status) over (partition by policy_id order by vas_claim_registered_timestamp DESC) as last_status from registration_data
+),	  
+    Final_Jan_claims as
+  (
+	select * from 
+	Ranked_with_lag
+	where claim_date BETWEEN '2025-01-01' AND '2025-01-31'
+	)
+	select 
+	a.claim_date,
+	a.policy_id,
+	a.vas_claim_id,
+	case 
+	when rn = 1 then 'First_time'
+	Else 'Repeat'
+	end as claim_type,
+	case
+	when prev_timestamp is NOT NULL and TIMESTAMP_DIFF(vas_claim_registered_timestamp, prev_timestamp, DAY) <= 3 then 'Repeat'
+	ELSE
+	'Unique'
+	end as same_day_repeat,
+	case when 
+	prev_timestamp is NOT NULl and TIMESTAMP_DIFF(vas_claim_registered_timestamp, prev_timestamp, DAY) <=7  then 'Repeat'
+	else 'Unique'
+	end as day7_repeat,
+	a.New_Plan,
+    a.claim_status,
+    a.vas_status,
+    a.plan_name,
+    a.construct_name,
+    a.brand_name,
+	b.first_status,
+	b.last_status
+	from Final_Jan_claims as a
+	left join first_last_status as b
+	on b.policy_id = a.policy_id
+	order by 
+		a.policy_id
+	
+	
