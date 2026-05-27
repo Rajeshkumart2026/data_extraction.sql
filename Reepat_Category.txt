@@ -1,0 +1,57 @@
+sElEcT * fRoM (with cte1 as 
+(
+  select  
+case_id,
+registered_date,
+month(registered_date) as month,
+to_date(registered_date) as Date,
+Weekofyear(registered_date) as weeknum,
+complaint_type,
+case 
+  when call_status in ('COMPLETED', 'Closed') then 'Completed'
+  else 'Pending'
+  end as New_Status,
+   product_service_category_new
+from  bigfoot_external_neo.scp_jeeves__jeeves_closures_and_sales_fact as a
+  where lookup_date(registered_date) between '20240901' and '20240905'
+),
+	cte2 as 
+			   (
+			   select 
+			    b.weeknum,
+			    b.product_service_category_new,
+				 count(*) as category_count
+			    from cte1 as b
+			  group by  		  
+			   b.weeknum,
+			   b.product_service_category_new
+			  ),			   
+			   cte3 as 
+			   (
+			   select 
+			      c.product_service_category_new,
+				   count(*) as repeat_count
+			    from cte1 as c
+			  group by  		  
+			      c.product_service_category_new
+				 			   		   )
+			   select 
+			   c2.weeknum,
+			   c2.product_service_category_new,
+			   c2.category_count,
+			   c3.repeat_count,
+			 	concat(round((c2.category_count * 100.0)/ sum(c2.category_count)  over (partition by c2.weeknum), 2 ),'%') as Category_Pert
+			    from cte2 as c2
+			   join  cte3 as c3
+			   on 
+			   c2.product_service_category_new = c3.product_service_category_new
+			   group by 
+			    c2.weeknum,
+			   c2.product_service_category_new,
+			   c2.category_count,
+			   c3.repeat_count
+			    order by  		  
+			   c2.weeknum,
+			     c2.product_service_category_new
+						 		  ) 
+			   qaas_injected_alias
