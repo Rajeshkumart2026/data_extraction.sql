@@ -1,0 +1,90 @@
+sElEcT 
+eof.order_date_key,
+eof.order_external_id,
+eof.analytic_business_unit,
+eof.analytic_category,
+eof.analytic_vertical,
+eof.view_flag,
+eof.saal_flag,
+eof.orders,
+eof.gmv
+ fRoM (WITH saal_viewed_users AS (
+  SELECT DISTINCT
+    day,
+    parent.data.visit.accountId AS accountid
+  FROM bigfoot_journal.dart_fkint_cp_ca_discover_discoverywidgetimpression_1
+  WHERE 
+    day BETWEEN CAST(date_format(date_sub(current_date(), 4), 'yyyyMMdd') AS INT)
+        AND CAST(date_format(current_date(), 'yyyyMMdd') AS INT)
+    AND data.navigationContext.mpid = 'FLIPKART' 
+    AND data.widgetViewType = 'DELIVERY_WITH_SAAL_DATA'
+    AND data.widgetTitle = 'DELIVERY_WITH_SAAL_OPT_IN_DATA'
+    AND data.navigationContext.pageName IN (
+      'Interstitial_bottom_sheet_pp_atc','Cart:ViewFlipkartTab','pp',
+      'ProductPage','bottomSheet','CART_PAGE','CHECKOUT_PAGE'
+    )
+    AND data.navigationContext.pageType IN ('bottomSheet','Cart','pp','dynamic')
+    AND parent.data.visit.accountId IS NOT NULL
+),
+
+orders_data AS (
+  SELECT
+    a.order_date_key,
+    a.order_external_id,
+    a.analytic_business_unit,
+    a.analytic_category,
+    a.analytic_vertical,
+    a.product_id,
+    a.account_id,
+    a.marketplace_id,
+    COUNT(DISTINCT a.order_external_id) AS orders,
+    SUM(a.gmv) AS gmv
+  FROM bigfoot_external_neo.cp_bi_prod_sales__forward_unit_history_fact a
+  WHERE TO_DATE(a.order_date_time) = date_sub(current_date(), 4)
+    AND LOWER(a.status) IN (
+      'in_progress','undelivered','completed','delivered','approved',
+      'shipped','ready_to_ship','returned','return_requested','activated'
+    )
+    AND a.category_id NOT IN (21726, 21651)
+    AND (a.replacement_for_unit IS NULL OR a.replacement_for_unit = 'not_replacement')
+    AND (a.exchange_for_unit IS NULL OR a.exchange_for_unit = 'not_exchange')
+    AND a.is_freebie = FALSE
+    AND a.is_shopsy_order = FALSE
+    AND LOWER(a.marketplace_id) = 'flipkart'
+  GROUP BY
+    a.order_date_key,
+    a.order_external_id,
+    a.analytic_business_unit,
+    a.analytic_category,
+    a.analytic_vertical,
+    a.account_id,
+    a.product_id,
+    a.marketplace_id
+),
+
+fsn AS (
+  SELECT
+    fsn, 
+    cms_vertical 
+  FROM bigfoot_external_neo.ixp_catalog__riyanps_master_fsn_fact  
+)
+
+SELECT
+  a.order_date_key,
+  a.order_external_id,
+  a.analytic_business_unit,
+  a.analytic_category,
+  a.analytic_vertical,
+  CASE WHEN u.accountid IS NULL THEN false ELSE true END AS view_flag, 
+  CASE WHEN LOWER(f.cms_vertical) = 'services' THEN true ELSE false END AS saal_flag,
+  a.orders,
+  a.gmv
+FROM orders_data a
+LEFT JOIN saal_viewed_users u 
+  ON a.account_id = u.accountid AND a.order_date_key >= u.day 
+LEFT JOIN fsn f
+  ON a.product_id = f.fsn
+WHERE 
+  LOWER(a.marketplace_id) = 'flipkart' 
+  AND LOWER(f.cms_vertical) = 'services'
+) as eof
